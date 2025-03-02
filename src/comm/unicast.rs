@@ -16,14 +16,12 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-use std::convert::Infallible;
 use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
-use std::vec::IntoIter;
 
 use constellation_auth::authn::AuthNMsgRecv;
 use constellation_auth::authn::PassthruMsgAuthN;
@@ -58,7 +56,7 @@ use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
 use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::SharedMsgs;
+use constellation_common::net::PrivateMsgs;
 use constellation_common::net::Socket;
 use constellation_common::sched::DenseItemID;
 use constellation_common::shutdown::ShutdownFlag;
@@ -67,8 +65,6 @@ use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
 use constellation_streams::error::ErrorReportInfo;
-use constellation_streams::multicast::StreamMulticaster;
-use constellation_streams::multicast::StreamMulticasterReporter;
 use constellation_streams::select::StreamSelector;
 use constellation_streams::select::StreamSelectorCreateError;
 use constellation_streams::select::StreamSelectorReporter;
@@ -79,14 +75,12 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::shared::PushStreamSharedThread;
+use constellation_streams::threads::push::private::PushStreamPrivateThread;
 use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::MulticastConfig;
-use crate::config::PartiesConfig;
-use crate::PartyStreamIdx;
+use crate::config::UnicastConfig;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
@@ -135,7 +129,7 @@ pub struct MulticastComm<
     Ctx
 > where
     Msg: 'static + Clone + Send,
-    Msgs: SharedMsgs<PartyStreamIdx, Msg>,
+    Msgs: PrivateMsgs<Msg>,
     SessionAuth: Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
@@ -201,85 +195,10 @@ pub struct MulticastComm<
         + Send
         + Sync {
     endpoint: PhantomData<Endpoint>,
-    push:
-        PushStreamSharedThread<
-            Msg,
-            Msgs,
-            StreamMulticaster<
-                SessionAuth::Prin,
-                PartyStreamIdx,
-                Msg,
-                StreamSelector<
-                    Epochs,
-                    FarChannelRegistryChannels<
-                        Msg,
-                        MsgCodec,
-                        PullStreamsReporter<
-                            Msg,
-                            Msg,
-                            ThreadedFlowsPullStreamListener<
-                                <Channel::Nego as OwnedFlowNegotiator<
-                                    F::Flow
-                                >>::Flow,
-                                Msg,
-                                MsgCodec,
-                                StreamID<
-                                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                                    F::ChannelID,
-                                    Channel::Param
-                                >,
-                                SessionAuth::Prin
-                            >,
-                            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                            Recv
-                        >,
-                        Channel,
-                        F,
-                        SessionAuth,
-                        Xfrm
-                    >,
-                    Resolver,
-                    Ctx
-                >,
-                Ctx
-            >,
-            Ctx
-        >,
-    pull: PullStreamsListenThread<
+    push: PushStreamPrivateThread<
         Msg,
-        Msg,
-        ThreadedFlowsPullStreamListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
-        >
-    >,
-    reporter: StreamMulticasterReporter<
-        PartyStreamIdx,
-        StreamSelectorReporter<
-            PullStreamsReporter<
-                Msg,
-                Msg,
-                ThreadedFlowsPullStreamListener<
-                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                    Msg,
-                    MsgCodec,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    SessionAuth::Prin
-                >,
-                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                Recv
-            >,
+        Msgs,
+        StreamSelector<
             Epochs,
             FarChannelRegistryChannels<
                 Msg,
@@ -308,7 +227,70 @@ pub struct MulticastComm<
             >,
             Resolver,
             Ctx
+        >,
+        Ctx
+    >,
+    pull: PullStreamsListenThread<
+        Msg,
+        Msg,
+        ThreadedFlowsPullStreamListener<
+            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+            Msg,
+            MsgCodec,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            SessionAuth::Prin
         >
+    >,
+    reporter: StreamSelectorReporter<
+        PullStreamsReporter<
+            Msg,
+            Msg,
+            ThreadedFlowsPullStreamListener<
+                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                Msg,
+                MsgCodec,
+                StreamID<
+                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                    F::ChannelID,
+                    Channel::Param
+                >,
+                SessionAuth::Prin
+            >,
+            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+            Recv
+        >,
+        Epochs,
+        FarChannelRegistryChannels<
+            Msg,
+            MsgCodec,
+            PullStreamsReporter<
+                Msg,
+                Msg,
+                ThreadedFlowsPullStreamListener<
+                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                    Msg,
+                    MsgCodec,
+                    StreamID<
+                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                        F::ChannelID,
+                        Channel::Param
+                    >,
+                    SessionAuth::Prin
+                >,
+                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                Recv
+            >,
+            Channel,
+            F,
+            SessionAuth,
+            Xfrm
+        >,
+        Resolver,
+        Ctx
     >
 }
 
@@ -372,7 +354,7 @@ impl<
     >
 where
     Msg: 'static + Clone + Send,
-    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
     SessionAuth: 'static
         + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
@@ -446,9 +428,7 @@ where
         + Sync
 {
     pub fn create(
-        self_party: SessionAuth::Prin,
-        config: MulticastConfig<
-            SessionAuth::Prin,
+        config: UnicastConfig<
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
             Epochs::Config,
             Endpoint
@@ -519,7 +499,7 @@ where
         debug!(target: "multicast-comm",
                "initializing pull streams");
 
-        let (slots_config, parties_config) = config.take();
+        let party_config = config.take();
 
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
@@ -538,83 +518,34 @@ where
         debug!(target: "multicast-comm",
                "initializing push streams");
 
-        let stream = match parties_config {
-            PartiesConfig::Static { stat } => {
-                let mut party_streams = Vec::with_capacity(stat.len());
-
-                for party in stat {
-                    let (party, party_config) = party.take();
-
-                    debug!(target: "multicast-comm",
-                           "creating stream for party {}",
-                           self_party);
-
-                    if party != self_party {
-                        let mut stream = StreamSelector::<
-                            Epochs,
-                            FarChannelRegistryChannels<
-                                Msg,
-                                MsgCodec,
-                                PullStreamsReporter<Msg, _, _, _, _>,
-                                Channel,
-                                F,
-                                SessionAuth,
-                                Xfrm
-                            >,
-                            Resolver,
-                            Ctx
-                        >::create(
-                            &mut ctx,
-                            shutdown.clone(),
-                            stream_reporter.clone(),
-                            party_config
-                        )
-                        .map_err(|err| MulticastCommRunError::Stream {
-                            err: err
-                        })?;
-                        // Refresh the streams to ensure no bad stream
-                        // reporting.
-                        stream.refresh(&mut ctx).map_err(|err| {
-                            MulticastCommRunError::Refresh { err: err }
-                        })?;
-                        party_streams.push((party, stream))
-                    } else {
-                        debug!(target: "multicast-comm",
-                               "skipping self-party {}",
-                               self_party)
-                    }
-                }
-
-                let stream: StreamMulticaster<
-                    SessionAuth::Prin,
-                    PartyStreamIdx,
-                    Msg,
-                    StreamSelector<
-                        Epochs,
-                        FarChannelRegistryChannels<
-                            Msg,
-                            MsgCodec,
-                            PullStreamsReporter<Msg, _, _, _, _>,
-                            Channel,
-                            F,
-                            SessionAuth,
-                            Xfrm
-                        >,
-                        Resolver,
-                        Ctx
-                    >,
-                    Ctx
-                > = StreamMulticaster::create(
-                    party_streams.into_iter(),
-                    slots_config
-                );
-
-                stream
-            }
-        };
+        let mut stream = StreamSelector::<
+            Epochs,
+            FarChannelRegistryChannels<
+                Msg,
+                MsgCodec,
+                PullStreamsReporter<Msg, _, _, _, _>,
+                Channel,
+                F,
+                SessionAuth,
+                Xfrm
+            >,
+            Resolver,
+            Ctx
+        >::create(
+            &mut ctx,
+            shutdown.clone(),
+            stream_reporter.clone(),
+            party_config
+        )
+        .map_err(|err| MulticastCommRunError::Stream { err: err })?;
+        // Refresh the streams to ensure no bad stream
+        // reporting.
+        stream
+            .refresh(&mut ctx)
+            .map_err(|err| MulticastCommRunError::Refresh { err: err })?;
 
         let reporter = stream.reporter(stream_reporter);
-        let sender = PushStreamSharedThread::create(
+        let sender = PushStreamPrivateThread::create(
             ctx,
             msgs,
             sender_notify.clone(),
@@ -628,13 +559,6 @@ where
             pull: pull_listener,
             push: sender
         })
-    }
-
-    #[inline]
-    pub fn parties(
-        &self
-    ) -> Result<IntoIter<(PartyStreamIdx, SessionAuth::Prin)>, Infallible> {
-        self.push.parties()
     }
 
     #[inline]
