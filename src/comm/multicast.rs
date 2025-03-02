@@ -85,7 +85,8 @@ use log::info;
 use crate::config::MulticastConfig;
 use crate::config::PartiesConfig;
 
-// XXX Need to refactor authn so we can properly handle message authentication.
+// ISSUE #2: Need to refactor authn so we can properly handle message
+// authentication.
 
 pub type CompoundMulticastComm<
     Msg,
@@ -523,7 +524,7 @@ where
 
         let (slots_config, parties_config) = config.take();
 
-        // ISSUE #5: get the codec config properly
+        // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
             .map_err(|err| MulticastCommRunError::MsgCodec { err: err })?;
         let notify = Notify::new();
