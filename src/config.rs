@@ -37,6 +37,17 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[serde(rename = "unicast")]
+#[serde(rename_all = "kebab-case")]
+pub struct UnicastConfig<Channels, Epochs, Endpoint>
+where
+    Channels: Default,
+    Epochs: Default {
+    #[serde(flatten)]
+    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "static-parties")]
 #[serde(rename_all = "kebab-case")]
 pub struct StaticPartyConfig<PartyID, Channels, Epochs, Endpoint>
@@ -59,6 +70,34 @@ where
         stat: Vec<StaticPartyConfig<PartyID, Channels, Epochs, Endpoint>>
     }
 }
+
+impl<Channels, Epochs, Endpoint> UnicastConfig<Channels, Epochs, Endpoint>
+where
+    Channels: Default,
+    Epochs: Default
+{
+    #[inline]
+    pub fn create(
+        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+    ) -> UnicastConfig<Channels, Epochs, Endpoint> {
+        UnicastConfig { party: party }
+    }
+
+    #[inline]
+    pub fn party(
+        &self
+    ) -> &PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
+        &self.party
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
+        self.party
+    }
+}
+
 impl<PartyID, Channels, Epochs, Endpoint>
     MulticastConfig<PartyID, Channels, Epochs, Endpoint>
 where
