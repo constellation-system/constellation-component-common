@@ -514,6 +514,7 @@ where
             1
         );
         let stream_reporter = pull_streams.reporter();
+
         // Bring up the push-side.
         debug!(target: "multicast-comm",
                "initializing push streams");
@@ -538,6 +539,7 @@ where
             party_config
         )
         .map_err(|err| MulticastCommRunError::Stream { err: err })?;
+
         // Refresh the streams to ensure no bad stream
         // reporting.
         stream
