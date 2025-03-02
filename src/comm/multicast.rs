@@ -16,12 +16,14 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use std::convert::Infallible;
 use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
+use std::vec::IntoIter;
 
 use constellation_auth::authn::AuthNMsgRecv;
 use constellation_auth::authn::PassthruMsgAuthN;
@@ -84,6 +86,7 @@ use log::info;
 
 use crate::config::MulticastConfig;
 use crate::config::PartiesConfig;
+use crate::PartyStreamIdx;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
@@ -309,13 +312,6 @@ pub struct MulticastComm<
     >
 }
 
-/// Index used to identify principals in the stream.
-///
-/// These correspond one-to-one with counterparties, but not all
-/// parties may be present in a given round.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PartyStreamIdx(usize);
-
 /// Cleanup object for [MulticastComm].
 pub struct MulticastCommCleanup {
     notify: Notify,
@@ -468,7 +464,8 @@ where
         >,
         mut ctx: Ctx,
         shutdown: ShutdownFlag,
-        authn_msg_recv: Recv,
+        sender_notify: Notify,
+        upstream_msg_recv: Recv,
         msgs: Msgs
     ) -> Result<
         Self,
@@ -527,12 +524,11 @@ where
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
             .map_err(|err| MulticastCommRunError::MsgCodec { err: err })?;
-        let notify = Notify::new();
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
             listener,
-            authn_msg_recv,
+            upstream_msg_recv,
             shutdown.clone(),
             PassthruMsgAuthN::default(),
             1
@@ -616,11 +612,12 @@ where
                 stream
             }
         };
+
         let reporter = stream.reporter(stream_reporter);
         let sender = PushStreamSharedThread::create(
             ctx,
             msgs,
-            notify.clone(),
+            sender_notify.clone(),
             stream,
             shutdown.clone()
         );
@@ -631,6 +628,18 @@ where
             pull: pull_listener,
             push: sender
         })
+    }
+
+    #[inline]
+    pub fn parties(
+        &self
+    ) -> Result<IntoIter<(PartyStreamIdx, SessionAuth::Prin)>, Infallible> {
+        self.push.parties()
+    }
+
+    #[inline]
+    pub fn notify(&self) -> Notify {
+        self.push.notify()
     }
 
     /// Consume this `MulticastComm`, start the threads, and return a
@@ -683,20 +692,6 @@ impl MulticastCommCleanup {
     }
 }
 
-impl From<usize> for PartyStreamIdx {
-    #[inline]
-    fn from(val: usize) -> PartyStreamIdx {
-        PartyStreamIdx(val)
-    }
-}
-
-impl From<PartyStreamIdx> for usize {
-    #[inline]
-    fn from(val: PartyStreamIdx) -> usize {
-        val.0
-    }
-}
-
 impl<Acquire, MsgCodec, Stream, Refresh> Display
     for MulticastCommRunError<Acquire, MsgCodec, Stream, Refresh>
 where
@@ -715,15 +710,5 @@ where
             MulticastCommRunError::Stream { err } => err.fmt(f),
             MulticastCommRunError::Refresh { err } => err.fmt(f)
         }
-    }
-}
-
-impl Display for PartyStreamIdx {
-    #[inline]
-    fn fmt(
-        &self,
-        f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
-        write!(f, "{}", self.0)
     }
 }

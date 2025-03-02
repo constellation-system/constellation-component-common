@@ -23,3 +23,38 @@
 
 pub mod comm;
 pub mod config;
+
+use std::fmt::Display;
+use std::fmt::Error;
+use std::fmt::Formatter;
+
+/// Index used to identify principals in the stream.
+///
+/// These correspond one-to-one with counterparties, but not all
+/// parties may be present in a given round.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PartyStreamIdx(usize);
+
+impl From<usize> for PartyStreamIdx {
+    #[inline]
+    fn from(val: usize) -> PartyStreamIdx {
+        PartyStreamIdx(val)
+    }
+}
+
+impl From<PartyStreamIdx> for usize {
+    #[inline]
+    fn from(val: PartyStreamIdx) -> usize {
+        val.0
+    }
+}
+
+impl Display for PartyStreamIdx {
+    #[inline]
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        write!(f, "{}", self.0)
+    }
+}
