@@ -263,23 +263,6 @@ pub struct MulticastComm<
     reporter: StreamMulticasterReporter<
         PartyStreamIdx,
         StreamSelectorReporter<
-            PullStreamsReporter<
-                Msg,
-                Msg,
-                ThreadedFlowsPullStreamListener<
-                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                    Msg,
-                    MsgCodec,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    SessionAuth::Prin
-                >,
-                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                Recv
-            >,
             Epochs,
             FarChannelRegistryChannels<
                 Msg,
@@ -613,7 +596,7 @@ where
             }
         };
 
-        let reporter = stream.reporter(stream_reporter);
+        let reporter = stream.reporter();
         let sender = PushStreamSharedThread::create(
             ctx,
             msgs,
