@@ -24,6 +24,10 @@
 pub mod comm;
 pub mod config;
 
+#[allow(clippy::all)]
+#[rustfmt::skip]
+mod generated;
+
 use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;

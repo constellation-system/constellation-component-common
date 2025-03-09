@@ -55,12 +55,16 @@ unix = ["constellation-auth/unix",
         "constellation-streams/unix"]
 
 [dependencies]
+asn1rs = { version = "0.3" }
 constellation-auth = { git = "https://github.com/constellation-system/constellation-auth.git", branch = "project/ioc", default-features = false }
 constellation-channels = { git = "https://github.com/constellation-system/constellation-channels.git", branch = "project/ioc", default-features = false }
 constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "project/ioc", default-features = false }
 constellation-streams = { git = "https://github.com/constellation-system/constellation-streams.git", branch = "project/ioc", default-features = false }
 log = { version = "0.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
+
+[build-dependencies]
+asn1rs = { version = "0.3" }
 
 [dev-dependencies]
 env_logger = { version = "0.10" }

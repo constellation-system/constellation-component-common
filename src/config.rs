@@ -48,7 +48,7 @@ where
     party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "dispatch-comm")]
 #[serde(rename_all = "kebab-case")]
 pub struct DispatchCommConfig<Epochs>
@@ -56,6 +56,7 @@ where
     Epochs: Default {
     #[serde(default)]
     sessions_hint: Option<usize>,
+    #[serde(default)]
     #[serde(flatten)]
     dispatch: DispatchConfig<Epochs>
 }
