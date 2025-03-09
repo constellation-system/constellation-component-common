@@ -84,7 +84,7 @@ use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::MulticastConfig;
+use crate::config::MulticastCommConfig;
 use crate::config::PartiesConfig;
 use crate::PartyStreamIdx;
 
@@ -430,7 +430,7 @@ where
 {
     pub fn create(
         self_party: SessionAuth::Prin,
-        config: MulticastConfig<
+        config: MulticastCommConfig<
             SessionAuth::Prin,
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
             Epochs::Config,

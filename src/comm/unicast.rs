@@ -80,7 +80,7 @@ use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::UnicastConfig;
+use crate::config::UnicastCommConfig;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
@@ -286,7 +286,7 @@ pub struct UnicastCommCleanup {
 
 /// Type of errors that can occur when creating a [UnicastComm].
 #[derive(Debug)]
-pub enum UnicastCommRunError<Acquire, MsgCodec, Stream, Refresh> {
+pub enum UnicastCommCreateError<Acquire, MsgCodec, Stream, Refresh> {
     /// Error acquiring channels.
     Acquire {
         /// The error that occurred while acquiring the channels.
@@ -411,7 +411,7 @@ where
         + Sync
 {
     pub fn create(
-        config: UnicastConfig<
+        config: UnicastCommConfig<
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
             Epochs::Config,
             Endpoint
@@ -432,7 +432,7 @@ where
         msgs: Msgs
     ) -> Result<
         Self,
-        UnicastCommRunError<
+        UnicastCommCreateError<
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
                     Channel::AcquireError,
@@ -476,7 +476,7 @@ where
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| UnicastCommRunError::Acquire { err: err })?;
+            .map_err(|err| UnicastCommCreateError::Acquire { err: err })?;
 
         // Bring up the pull-side.
         debug!(target: "unicast-comm",
@@ -486,7 +486,7 @@ where
 
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
-            .map_err(|err| UnicastCommRunError::MsgCodec { err: err })?;
+            .map_err(|err| UnicastCommCreateError::MsgCodec { err: err })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
@@ -521,13 +521,13 @@ where
             stream_reporter.clone(),
             party_config
         )
-        .map_err(|err| UnicastCommRunError::Stream { err: err })?;
+        .map_err(|err| UnicastCommCreateError::Stream { err: err })?;
 
         // Refresh the streams to ensure no bad stream
         // reporting.
         stream
             .refresh(&mut ctx)
-            .map_err(|err| UnicastCommRunError::Refresh { err: err })?;
+            .map_err(|err| UnicastCommCreateError::Refresh { err: err })?;
 
         let reporter = stream.reporter();
         let sender = PushStreamPrivateThread::create(
@@ -595,14 +595,11 @@ impl UnicastCommCleanup {
             error!(target: "unicast-comm-cleanup",
                    "error joining pull streams listener")
         }
-
-        debug!(target: "unicast-comm-cleanup",
-               "joining state thread");
     }
 }
 
 impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for UnicastCommRunError<Acquire, MsgCodec, Stream, Refresh>
+    for UnicastCommCreateError<Acquire, MsgCodec, Stream, Refresh>
 where
     Acquire: Display,
     MsgCodec: Display,
@@ -614,10 +611,10 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            UnicastCommRunError::Acquire { err } => err.fmt(f),
-            UnicastCommRunError::MsgCodec { err } => err.fmt(f),
-            UnicastCommRunError::Stream { err } => err.fmt(f),
-            UnicastCommRunError::Refresh { err } => err.fmt(f)
+            UnicastCommCreateError::Acquire { err } => err.fmt(f),
+            UnicastCommCreateError::MsgCodec { err } => err.fmt(f),
+            UnicastCommCreateError::Stream { err } => err.fmt(f),
+            UnicastCommCreateError::Refresh { err } => err.fmt(f)
         }
     }
 }

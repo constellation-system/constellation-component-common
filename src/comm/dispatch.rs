@@ -29,6 +29,8 @@ use constellation_auth::authn::SessionAuthN;
 use constellation_channels::config::ResolverConfig;
 use constellation_channels::far::flows::OwnedFlowNegotiator;
 use constellation_channels::far::flows::OwnedFlowsCreate;
+use constellation_channels::far::flows::ThreadedFlowsListener;
+use constellation_channels::far::flows::ThreadedFlowsPullStreamListener;
 use constellation_channels::far::registry::FarChannelRegistryCtx;
 use constellation_channels::far::FarChannelAcquiredResolve;
 use constellation_channels::far::FarChannelCreate;
@@ -60,9 +62,11 @@ use constellation_streams::threads::dispatch::Dispatch;
 use constellation_streams::threads::dispatch::DispatchDropHandle;
 use constellation_streams::threads::dispatch::DispatchEntryReporter;
 use constellation_streams::threads::dispatch::Dispatched;
+use constellation_streams::threads::dispatch::PullStreamsDispatchThread;
 use log::debug;
 use log::error;
-use log::info;
+
+use crate::config::DispatchCommConfig;
 
 pub trait SessionDispatch<Msg, Msgs, Prin, Recv, Drop>
 where
@@ -90,6 +94,181 @@ pub enum DispatchError<Session> {
         /// The error that occurred while creating [StreamSelector]s.
         err: RefreshError
     }
+}
+
+/// Type of errors that can occur when creating a [DispatchComm].
+#[derive(Debug)]
+pub enum DispatchCommCreateError<MsgCodec> {
+    /// Error while creating message codecs.
+    MsgCodec {
+        /// The error that occurred while creating message codecs.
+        err: MsgCodec
+    }
+}
+
+/// Cleanup object for [UnicastComm].
+pub struct DispatchCommCleanup {
+    pull_join: JoinHandle<()>
+}
+
+pub struct DispatchComm<
+    Msg,
+    MsgCodec,
+    Msgs,
+    Recv,
+    Epochs,
+    Channel,
+    F,
+    SessionAuth,
+    Xfrm,
+    Resolver,
+    Endpoint,
+    Session,
+    Ctx
+> where
+    Msg: 'static + Clone + Send,
+    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
+    <MsgCodec as DatagramCodec<Msg>>::Param: Default,
+    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
+        ErrorReportInfo<DenseItemID<usize>>,
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
+    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
+    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
+    Epochs::Config: Clone + Send,
+    Channel: 'static
+        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
+        + FarChannelCreate
+        + Send
+        + Sync,
+    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
+    Channel::Param: Clone
+        + Display
+        + Eq
+        + Hash
+        + PartialEq
+        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
+        + Send
+        + Sync,
+    Channel::Acquired:
+        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
+    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
+        'static + ConcurrentStream + Send,
+    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
+        'static + Eq + Hash + Send + Sync,
+    F: OwnedFlowsCreate<
+            Channel::Socket,
+            Channel::Nego,
+            SessionAuth,
+            Channel::Xfrm
+        > + Send,
+    F::Flow: 'static + ConcurrentStream + Send,
+    F::CreateParam: Clone + Default + Send + Sync,
+    F::Reporter: Clone + Send + Sync,
+    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
+    SessionAuth: Clone
+        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
+        + Send
+        + Sync,
+    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
+    Xfrm:
+        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
+    Xfrm::CreateParam: Clone + Default + Send + Sync,
+    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
+    Resolver: Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
+        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
+        + Send
+        + Sync,
+    Resolver::Origin:
+        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
+    Endpoint: Send,
+    Session: SessionDispatch<
+        Msg,
+        Msgs,
+        SessionAuth::Prin,
+        Recv,
+        DispatchDropHandle<
+            Msg,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            DatagramCodecStream<
+                Msg,
+                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                MsgCodec
+            >,
+            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+            Recv,
+            DispatchSelectorReporter<
+                Epochs,
+                StreamID<
+                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                    F::ChannelID,
+                    Channel::Param
+                >,
+                ThreadedStream<
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >
+                >,
+                DispatchEntryReporter<
+                    Msg,
+                    StreamID<
+                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                        F::ChannelID,
+                        Channel::Param
+                    >,
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >,
+                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                    Recv
+                >,
+                Ctx
+            >
+        >
+    > + Send,
+    Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
+        + NSNameCachesCtx
+        + Send
+        + Sync,
+    Ctx::NameCaches: NSNameCachesCtx {
+    pull: PullStreamsDispatchThread<
+        Msg,
+        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+        Dispatcher<
+            Msg,
+            MsgCodec,
+            Msgs,
+            Recv,
+            Epochs,
+            Channel,
+            F,
+            SessionAuth,
+            Xfrm,
+            Resolver,
+            Endpoint,
+            Session,
+            Ctx
+        >,
+        ThreadedFlowsPullStreamListener<
+            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+            Msg,
+            MsgCodec,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            SessionAuth::Prin
+        >,
+        Ctx
+    >,
 }
 
 struct Dispatcher<
@@ -231,6 +410,211 @@ struct Dispatcher<
     ctx: PhantomData<Ctx>,
     session: Session,
     config: DispatchConfig<Epochs::Config>
+}
+
+impl<
+    Msg,
+    MsgCodec,
+    Msgs,
+    Recv,
+    Epochs,
+    Channel,
+    F,
+    SessionAuth,
+    Xfrm,
+    Resolver,
+    Endpoint,
+    Session,
+    Ctx
+> DispatchComm<
+    Msg,
+    MsgCodec,
+    Msgs,
+    Recv,
+    Epochs,
+    Channel,
+    F,
+    SessionAuth,
+    Xfrm,
+    Resolver,
+    Endpoint,
+    Session,
+    Ctx
+> where
+    Msg: 'static + Clone + Send,
+    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
+    <MsgCodec as DatagramCodec<Msg>>::Param: Default,
+    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
+        ErrorReportInfo<DenseItemID<usize>>,
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
+    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
+    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
+    Epochs::Config: Clone + Send,
+    Channel: 'static
+        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
+        + FarChannelCreate
+        + Send
+        + Sync,
+    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
+    Channel::Param: Clone
+        + Display
+        + Eq
+        + Hash
+        + PartialEq
+        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
+        + Send
+        + Sync,
+    Channel::Acquired:
+        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
+    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
+        'static + ConcurrentStream + Send,
+    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
+        'static + Eq + Hash + Send + Sync,
+    F: 'static + OwnedFlowsCreate<
+            Channel::Socket,
+            Channel::Nego,
+            SessionAuth,
+            Channel::Xfrm
+        > + Send,
+    F::Flow: 'static + ConcurrentStream + Send,
+    F::CreateParam: Clone + Default + Send + Sync,
+    F::Reporter: Clone + Send + Sync,
+    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
+    SessionAuth: 'static + Clone
+        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
+        + Send
+        + Sync,
+    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
+    Xfrm: 'static +
+        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
+    Xfrm::CreateParam: Clone + Default + Send + Sync,
+    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
+    Resolver: 'static + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
+        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
+        + Send
+        + Sync,
+    Resolver::Origin:
+        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
+    Endpoint: 'static + Send,
+    Session: 'static + SessionDispatch<
+        Msg,
+        Msgs,
+        SessionAuth::Prin,
+        Recv,
+        DispatchDropHandle<
+            Msg,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            DatagramCodecStream<
+                Msg,
+                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                MsgCodec
+            >,
+            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+            Recv,
+            DispatchSelectorReporter<
+                Epochs,
+                StreamID<
+                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                    F::ChannelID,
+                    Channel::Param
+                >,
+                ThreadedStream<
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >
+                >,
+                DispatchEntryReporter<
+                    Msg,
+                    StreamID<
+                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                        F::ChannelID,
+                        Channel::Param
+                    >,
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >,
+                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                    Recv
+                >,
+                Ctx
+            >
+        >
+    > + Send,
+    Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
+        + NSNameCachesCtx
+        + Send
+        + Sync,
+    Ctx::NameCaches: NSNameCachesCtx {
+    pub fn create(
+        config: DispatchCommConfig<Epochs::Config>,
+        session: Session,
+        listener: ThreadedFlowsListener<
+            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            SessionAuth::Prin
+        >,
+        shutdown: ShutdownFlag,
+        ctx: Ctx
+    ) -> Result<Self, DispatchCommCreateError<MsgCodec::CreateError>> {
+        let (size_hint, dispatch_config) = config.take();
+        let dispatcher = Dispatcher {
+            msg: PhantomData,
+            codec: PhantomData,
+            msgs: PhantomData,
+            recv: PhantomData,
+            channel: PhantomData,
+            flows: PhantomData,
+            auth: PhantomData,
+            xfrm: PhantomData,
+            resolver: PhantomData,
+            endpoint: PhantomData,
+            ctx: PhantomData,
+            session: session,
+            config: dispatch_config
+        };
+        // ISSUE #1: get the codec config properly
+        let msg_codec = MsgCodec::create(MsgCodec::Param::default())
+            .map_err(|err| DispatchCommCreateError::MsgCodec { err: err })?;
+        let listener =
+            ThreadedFlowsPullStreamListener::create(listener, msg_codec);
+        let pull = match size_hint {
+            Some(size_hint) => PullStreamsDispatchThread::with_capacity(
+                dispatcher, listener, shutdown, ctx, size_hint
+            ),
+            None =>  PullStreamsDispatchThread::new(
+                dispatcher, listener, shutdown, ctx
+            )
+        };
+
+        Ok(DispatchComm {
+            pull: pull
+        })
+    }
+
+    /// Consume this `DispatchComm`, start the threads, and return a
+    /// cleanup object.
+    pub fn start(self) -> DispatchCommCleanup {
+        let DispatchComm {
+            pull,
+        } = self;
+        let pull_join = pull.start();
+
+        DispatchCommCleanup {
+            pull_join: pull_join
+        }
+    }
 }
 
 impl<
@@ -516,6 +900,18 @@ where
     }
 }
 
+impl DispatchCommCleanup {
+    pub fn cleanup(self) {
+        debug!(target: "dispatch-comm-cleanup",
+               "joining pull streams");
+
+        if self.pull_join.join().is_err() {
+            error!(target: "dispatch-comm-cleanup",
+                   "error joining pull streams listener")
+        }
+    }
+}
+
 impl<Session> Display for DispatchError<Session>
 where
     Session: Display
@@ -527,6 +923,20 @@ where
         match self {
             DispatchError::Session { err } => err.fmt(f),
             DispatchError::Stream { err } => err.fmt(f)
+        }
+    }
+}
+
+impl<MsgCodec> Display for DispatchCommCreateError<MsgCodec>
+where
+    MsgCodec: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            DispatchCommCreateError::MsgCodec { err } => err.fmt(f)
         }
     }
 }
