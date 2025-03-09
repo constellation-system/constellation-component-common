@@ -18,14 +18,15 @@
 
 use constellation_channels::config::ResolverConfig;
 use constellation_streams::config::BatchSlotsConfig;
+use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::PartyConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "multicast")]
+#[serde(rename = "multicast-comm")]
 #[serde(rename_all = "kebab-case")]
-pub struct MulticastConfig<PartyID, Channels, Epochs, Endpoint>
+pub struct MulticastCommConfig<PartyID, Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default {
@@ -37,14 +38,26 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "unicast")]
+#[serde(rename = "unicast-comm")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastConfig<Channels, Epochs, Endpoint>
+pub struct UnicastCommConfig<Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default {
     #[serde(flatten)]
     party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[serde(rename = "dispatch-comm")]
+#[serde(rename_all = "kebab-case")]
+pub struct DispatchCommConfig<Epochs>
+where
+    Epochs: Default {
+    #[serde(default)]
+    sessions_hint: Option<usize>,
+    #[serde(flatten)]
+    dispatch: DispatchConfig<Epochs>
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
@@ -71,7 +84,38 @@ where
     }
 }
 
-impl<Channels, Epochs, Endpoint> UnicastConfig<Channels, Epochs, Endpoint>
+impl<Epochs> DispatchCommConfig<Epochs>
+where
+    Epochs: Default
+{
+    #[inline]
+    pub fn create(
+        sessions_hint: Option<usize>,
+        dispatch: DispatchConfig<Epochs>
+    ) -> DispatchCommConfig<Epochs> {
+        DispatchCommConfig {
+            sessions_hint: sessions_hint,
+            dispatch: dispatch
+        }
+    }
+
+    #[inline]
+    pub fn dispatch(&self) -> &DispatchConfig<Epochs> {
+        &self.dispatch
+    }
+
+    #[inline]
+    pub fn sessions_hint(&self) -> Option<usize> {
+        self.sessions_hint
+    }
+
+    #[inline]
+    pub fn take(self) -> (Option<usize>, DispatchConfig<Epochs>) {
+        (self.sessions_hint, self.dispatch)
+    }
+}
+
+impl<Channels, Epochs, Endpoint> UnicastCommConfig<Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default
@@ -79,8 +123,8 @@ where
     #[inline]
     pub fn create(
         party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
-    ) -> UnicastConfig<Channels, Epochs, Endpoint> {
-        UnicastConfig { party: party }
+    ) -> UnicastCommConfig<Channels, Epochs, Endpoint> {
+        UnicastCommConfig { party: party }
     }
 
     #[inline]
@@ -99,7 +143,7 @@ where
 }
 
 impl<PartyID, Channels, Epochs, Endpoint>
-    MulticastConfig<PartyID, Channels, Epochs, Endpoint>
+    MulticastCommConfig<PartyID, Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default
@@ -108,8 +152,8 @@ where
     pub fn create(
         slots: BatchSlotsConfig,
         parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>
-    ) -> MulticastConfig<PartyID, Channels, Epochs, Endpoint> {
-        MulticastConfig {
+    ) -> MulticastCommConfig<PartyID, Channels, Epochs, Endpoint> {
+        MulticastCommConfig {
             slots: slots,
             parties: parties
         }
