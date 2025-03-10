@@ -43,7 +43,6 @@ use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
 use constellation_common::net::PrivateMsgs;
 use constellation_common::net::Socket;
-use constellation_common::sched::DenseItemID;
 use constellation_common::sched::RefreshError;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
@@ -52,14 +51,11 @@ use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
 use constellation_streams::codec::DatagramCodecStream;
 use constellation_streams::config::DispatchConfig;
-use constellation_streams::error::ErrorReportInfo;
 use constellation_streams::select::dispatch::DispatchSelector;
-use constellation_streams::select::dispatch::DispatchSelectorReporter;
 use constellation_streams::stream::ConcurrentStream;
 use constellation_streams::stream::StreamID;
 use constellation_streams::stream::ThreadedStream;
 use constellation_streams::threads::dispatch::Dispatch;
-use constellation_streams::threads::dispatch::DispatchDropHandle;
 use constellation_streams::threads::dispatch::DispatchEntryReporter;
 use constellation_streams::threads::dispatch::Dispatched;
 use constellation_streams::threads::dispatch::PullStreamsDispatchThread;
@@ -68,7 +64,7 @@ use log::error;
 
 use crate::config::DispatchCommConfig;
 
-pub trait SessionDispatch<Msg, Msgs, Prin, Recv, Drop>
+pub trait SessionDispatch<Msg, Msgs, Prin, Recv>
 where
     Msgs: PrivateMsgs<Msg> + Send,
     Recv: AuthNMsgRecv<Prin, Msg> {
@@ -76,8 +72,7 @@ where
 
     fn session(
         &self,
-        prin: Prin,
-        drop: Drop
+        prin: Prin
     ) -> Result<(ShutdownFlag, Msgs, Notify, Recv), Self::SessionError>;
 }
 
@@ -129,8 +124,6 @@ pub struct DispatchComm<
     Msg: 'static + Clone + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Msgs: 'static + PrivateMsgs<Msg> + Send,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
@@ -186,58 +179,11 @@ pub struct DispatchComm<
         Msgs,
         SessionAuth::Prin,
         Recv,
-        DispatchDropHandle<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Recv,
-            DispatchSelectorReporter<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >
-        >
     > + Send,
     Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx {
+        + Sync {
     pull: PullStreamsDispatchThread<
         Msg,
         PassthruMsgAuthN<Msg, SessionAuth::Prin>,
@@ -289,8 +235,6 @@ struct Dispatcher<
     Msg: 'static + Clone + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Msgs: 'static + PrivateMsgs<Msg> + Send,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
@@ -345,58 +289,11 @@ struct Dispatcher<
         Msgs,
         SessionAuth::Prin,
         Recv,
-        DispatchDropHandle<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Recv,
-            DispatchSelectorReporter<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >
-        >
     >,
     Ctx: FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx {
+        + Sync {
     msg: PhantomData<Msg>,
     codec: PhantomData<MsgCodec>,
     msgs: PhantomData<Msgs>,
@@ -444,8 +341,6 @@ impl<
     Msg: 'static + Clone + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Msgs: 'static + PrivateMsgs<Msg> + Send,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
@@ -501,58 +396,11 @@ impl<
         Msgs,
         SessionAuth::Prin,
         Recv,
-        DispatchDropHandle<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Recv,
-            DispatchSelectorReporter<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >
-        >
     > + Send,
     Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx {
+        + Sync {
     pub fn create(
         config: DispatchCommConfig<Epochs::Config>,
         session: Session,
@@ -666,8 +514,6 @@ where
     Msg: 'static + Clone + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Msgs: 'static + PrivateMsgs<Msg> + Send,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
@@ -723,59 +569,12 @@ where
         Msgs,
         SessionAuth::Prin,
         Recv,
-        DispatchDropHandle<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Recv,
-            DispatchSelectorReporter<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >
-        >
     >,
     Ctx: 'static
         + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
         + Sync,
-    Ctx::NameCaches: NSNameCachesCtx
 {
     type DispatchError = DispatchError<Session::SessionError>;
     type Msgs = Msgs;
@@ -816,53 +615,7 @@ where
     fn dispatch(
         &mut self,
         _ctx: &mut Ctx,
-        prin: SessionAuth::Prin,
-        drop: DispatchDropHandle<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Self::Recv,
-            DispatchSelectorReporter<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >
-        >
+        prin: SessionAuth::Prin
     ) -> Result<
         (
             Self::PushStream,
@@ -888,7 +641,7 @@ where
     > {
         let (shutdown, msgs, notify, recv) =
             self.session
-                .session(prin, drop)
+                .session(prin)
                 .map_err(|err| DispatchError::Session { err: err })?;
         let dispatched =
             Dispatched::new(shutdown, PassthruMsgAuthN::default(), recv);
