@@ -137,8 +137,6 @@ pub struct UnicastComm<
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -346,8 +344,6 @@ where
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
