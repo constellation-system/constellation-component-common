@@ -31,9 +31,13 @@ use constellation_channels::far::flows::OwnedFlowNegotiator;
 use constellation_channels::far::flows::OwnedFlowsCreate;
 use constellation_channels::far::flows::ThreadedFlowsListener;
 use constellation_channels::far::flows::ThreadedFlowsPullStreamListener;
+use constellation_channels::far::registry::FarChannelRegistryAcquireError;
 use constellation_channels::far::registry::FarChannelRegistryCtx;
+use constellation_channels::far::registry::RegistryAcquireError;
+use constellation_channels::far::FarChannelAcquired;
 use constellation_channels::far::FarChannelAcquiredResolve;
 use constellation_channels::far::FarChannelCreate;
+use constellation_channels::far::FarChannelFlowsError;
 use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_common::codec::DatagramCodec;
@@ -93,11 +97,14 @@ pub enum DispatchError<Session> {
 
 /// Type of errors that can occur when creating a [DispatchComm].
 #[derive(Debug)]
-pub enum DispatchCommCreateError<MsgCodec> {
+pub enum DispatchCommCreateError<MsgCodec, Acquire> {
     /// Error while creating message codecs.
     MsgCodec {
         /// The error that occurred while creating message codecs.
         err: MsgCodec
+    },
+    Acquire {
+        err: Acquire
     }
 }
 
@@ -414,9 +421,35 @@ impl<
             SessionAuth::Prin
         >,
         shutdown: ShutdownFlag,
-        ctx: Ctx
-    ) -> Result<Self, DispatchCommCreateError<MsgCodec::CreateError>> {
+        mut ctx: Ctx
+    ) -> Result<
+        Self,
+        DispatchCommCreateError<
+            MsgCodec::CreateError,
+            FarChannelRegistryAcquireError<
+                RegistryAcquireError<
+                    Channel::AcquireError,
+                    <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
+                    FarChannelFlowsError<
+                        Channel::SocketError,
+                        F::CreateError,
+                        Channel::XfrmError
+                    >,
+                    <Channel::Acquired as FarChannelAcquired>::WrapError
+                >
+            >
+        >
+    > {
         let (size_hint, dispatch_config) = config.take();
+
+        debug!(target: "multicast-comm",
+               "initializing channels");
+
+        // Bring up all channels.
+        ctx.far_channel_registry()
+            .acquire_all(&mut ctx)
+            .map_err(|err| DispatchCommCreateError::Acquire { err: err })?;
+
         let dispatcher = Dispatcher {
             msg: PhantomData,
             codec: PhantomData,
@@ -658,6 +691,9 @@ impl DispatchCommCleanup {
         debug!(target: "dispatch-comm-cleanup",
                "joining pull streams");
 
+        // XXX this won't stop the pull threads properly, but we need
+        // the non-blocking I/O refactor to do that properly.
+
         if self.pull_join.join().is_err() {
             error!(target: "dispatch-comm-cleanup",
                    "error joining pull streams listener")
@@ -680,16 +716,18 @@ where
     }
 }
 
-impl<MsgCodec> Display for DispatchCommCreateError<MsgCodec>
+impl<MsgCodec, Acquire> Display for DispatchCommCreateError<MsgCodec, Acquire>
 where
-    MsgCodec: Display
+    MsgCodec: Display,
+    Acquire: Display
 {
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            DispatchCommCreateError::MsgCodec { err } => err.fmt(f)
+            DispatchCommCreateError::MsgCodec { err } => err.fmt(f),
+            DispatchCommCreateError::Acquire { err } => err.fmt(f)
         }
     }
 }
