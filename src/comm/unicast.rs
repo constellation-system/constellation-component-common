@@ -58,13 +58,11 @@ use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
 use constellation_common::net::PrivateMsgs;
 use constellation_common::net::Socket;
-use constellation_common::sched::DenseItemID;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
-use constellation_streams::error::ErrorReportInfo;
 use constellation_streams::select::StreamSelector;
 use constellation_streams::select::StreamSelectorCreateError;
 use constellation_streams::select::StreamSelectorReporter;
@@ -137,8 +135,6 @@ pub struct UnicastComm<
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -346,8 +342,6 @@ where
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
-    <MsgCodec as DatagramCodec<Msg>>::EncodeError:
-        ErrorReportInfo<DenseItemID<usize>>,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
