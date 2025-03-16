@@ -181,13 +181,10 @@ pub struct DispatchComm<
     Resolver::Origin:
         Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
     Endpoint: Send,
-    Session: SessionDispatch<
-        Msg,
-        Msgs,
-        SessionAuth::Prin,
-        Recv,
-    > + Send,
-    Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
+    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv> + Send,
+    Ctx: 'static
+        + Clone
+        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
         + Sync {
@@ -221,7 +218,7 @@ pub struct DispatchComm<
             SessionAuth::Prin
         >,
         Ctx
-    >,
+    >
 }
 
 struct Dispatcher<
@@ -291,12 +288,7 @@ struct Dispatcher<
     Resolver::Origin:
         Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
     Endpoint: Send,
-    Session: SessionDispatch<
-        Msg,
-        Msgs,
-        SessionAuth::Prin,
-        Recv,
-    >,
+    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv>,
     Ctx: FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
@@ -317,34 +309,36 @@ struct Dispatcher<
 }
 
 impl<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Session,
-    Ctx
-> DispatchComm<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Session,
-    Ctx
-> where
+        Msg,
+        MsgCodec,
+        Msgs,
+        Recv,
+        Epochs,
+        Channel,
+        F,
+        SessionAuth,
+        Xfrm,
+        Resolver,
+        Endpoint,
+        Session,
+        Ctx
+    >
+    DispatchComm<
+        Msg,
+        MsgCodec,
+        Msgs,
+        Recv,
+        Epochs,
+        Channel,
+        F,
+        SessionAuth,
+        Xfrm,
+        Resolver,
+        Endpoint,
+        Session,
+        Ctx
+    >
+where
     Msg: 'static + Clone + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as DatagramCodec<Msg>>::Param: Default,
@@ -372,42 +366,48 @@ impl<
         'static + ConcurrentStream + Send,
     <Channel::Xfrm as DatagramXfrm>::PeerAddr:
         'static + Eq + Hash + Send + Sync,
-    F: 'static + OwnedFlowsCreate<
+    F: 'static
+        + OwnedFlowsCreate<
             Channel::Socket,
             Channel::Nego,
             SessionAuth,
             Channel::Xfrm
-        > + Send,
+        >
+        + Send,
     F::Flow: 'static + ConcurrentStream + Send,
     F::CreateParam: Clone + Default + Send + Sync,
     F::Reporter: Clone + Send + Sync,
     F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    SessionAuth: 'static + Clone
+    SessionAuth: 'static
+        + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    Xfrm: 'static +
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
+    Xfrm: 'static
+        + DatagramXfrm
+        + DatagramXfrmCreate<Addr = Channel::Param>
+        + Send
+        + Sync,
     Xfrm::CreateParam: Clone + Default + Send + Sync,
     Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Resolver: 'static + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
+    Resolver: 'static
+        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
         + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
         + Send
         + Sync,
     Resolver::Origin:
         Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
     Endpoint: 'static + Send,
-    Session: 'static + SessionDispatch<
-        Msg,
-        Msgs,
-        SessionAuth::Prin,
-        Recv,
-    > + Send,
-    Ctx: 'static + Clone + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
+    Session:
+        'static + SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv> + Send,
+    Ctx: 'static
+        + Clone
+        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
-        + Sync {
+        + Sync
+{
     pub fn create(
         config: DispatchCommConfig<Epochs::Config>,
         session: Session,
@@ -439,7 +439,7 @@ impl<
                 >
             >
         >
-    > {
+    >{
         let (size_hint, dispatch_config) = config.take();
 
         debug!(target: "multicast-comm",
@@ -474,22 +474,18 @@ impl<
             Some(size_hint) => PullStreamsDispatchThread::with_capacity(
                 dispatcher, listener, shutdown, ctx, size_hint
             ),
-            None =>  PullStreamsDispatchThread::new(
+            None => PullStreamsDispatchThread::new(
                 dispatcher, listener, shutdown, ctx
             )
         };
 
-        Ok(DispatchComm {
-            pull: pull
-        })
+        Ok(DispatchComm { pull: pull })
     }
 
     /// Consume this `DispatchComm`, start the threads, and return a
     /// cleanup object.
     pub fn start(self) -> DispatchCommCleanup {
-        let DispatchComm {
-            pull,
-        } = self;
+        let DispatchComm { pull } = self;
         let pull_join = pull.start();
 
         DispatchCommCleanup {
@@ -597,17 +593,12 @@ where
     Resolver::Origin:
         Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
     Endpoint: Send,
-    Session: SessionDispatch<
-        Msg,
-        Msgs,
-        SessionAuth::Prin,
-        Recv,
-    >,
+    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv>,
     Ctx: 'static
         + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
         + Send
-        + Sync,
+        + Sync
 {
     type DispatchError = DispatchError<Session::SessionError>;
     type Msgs = Msgs;
@@ -672,10 +663,10 @@ where
         ),
         Self::DispatchError
     > {
-        let (shutdown, msgs, notify, recv) =
-            self.session
-                .session(prin)
-                .map_err(|err| DispatchError::Session { err: err })?;
+        let (shutdown, msgs, notify, recv) = self
+            .session
+            .session(prin)
+            .map_err(|err| DispatchError::Session { err: err })?;
         let dispatched =
             Dispatched::new(shutdown, PassthruMsgAuthN::default(), recv);
         let reporter = dispatched.reporter();
