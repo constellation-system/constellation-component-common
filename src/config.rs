@@ -20,6 +20,7 @@ use constellation_channels::config::ResolverConfig;
 use constellation_streams::config::BatchSlotsConfig;
 use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::PartyConfig;
+use constellation_streams::config::PrivateSmallObjModeConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -45,7 +46,10 @@ where
     Channels: Default,
     Epochs: Default {
     #[serde(flatten)]
-    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+    #[serde(flatten)]
+    #[serde(default)]
+    mode: PrivateSmallObjModeConfig
 }
 
 #[derive(
@@ -60,7 +64,10 @@ where
     sessions_hint: Option<usize>,
     #[serde(default)]
     #[serde(flatten)]
-    dispatch: DispatchConfig<Epochs>
+    dispatch: DispatchConfig<Epochs>,
+    #[serde(flatten)]
+    #[serde(default)]
+    mode: PrivateSmallObjModeConfig
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
@@ -94,11 +101,13 @@ where
     #[inline]
     pub fn create(
         sessions_hint: Option<usize>,
-        dispatch: DispatchConfig<Epochs>
+        dispatch: DispatchConfig<Epochs>,
+        mode: PrivateSmallObjModeConfig
     ) -> DispatchCommConfig<Epochs> {
         DispatchCommConfig {
             sessions_hint: sessions_hint,
-            dispatch: dispatch
+            dispatch: dispatch,
+            mode: mode
         }
     }
 
@@ -113,8 +122,17 @@ where
     }
 
     #[inline]
-    pub fn take(self) -> (Option<usize>, DispatchConfig<Epochs>) {
-        (self.sessions_hint, self.dispatch)
+    pub fn mode(
+        &self
+    ) -> &PrivateSmallObjModeConfig {
+        &self.mode
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (Option<usize>, DispatchConfig<Epochs>, PrivateSmallObjModeConfig) {
+        (self.sessions_hint, self.dispatch, self.mode)
     }
 }
 
@@ -125,9 +143,10 @@ where
 {
     #[inline]
     pub fn create(
-        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+        mode: PrivateSmallObjModeConfig
     ) -> UnicastCommConfig<Channels, Epochs, Endpoint> {
-        UnicastCommConfig { party: party }
+        UnicastCommConfig { party: party, mode: mode }
     }
 
     #[inline]
@@ -138,10 +157,18 @@ where
     }
 
     #[inline]
+    pub fn mode(
+        &self
+    ) -> &PrivateSmallObjModeConfig {
+        &self.mode
+    }
+
+    #[inline]
     pub fn take(
         self
-    ) -> PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
-        self.party
+    ) -> (PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+          PrivateSmallObjModeConfig){
+        (self.party, self.mode)
     }
 }
 

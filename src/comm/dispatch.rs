@@ -64,6 +64,7 @@ use constellation_streams::threads::dispatch::Dispatch;
 use constellation_streams::threads::dispatch::DispatchEntryReporter;
 use constellation_streams::threads::dispatch::Dispatched;
 use constellation_streams::threads::dispatch::PullStreamsDispatchThread;
+use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
 use log::debug;
 use log::error;
 
@@ -217,6 +218,41 @@ pub struct DispatchComm<
                 Channel::Param
             >,
             SessionAuth::Prin
+        >,
+        PrivateSmallObjPushMode<
+            Msg,
+            DispatchSelector<
+                 Epochs,
+                 StreamID<
+                     <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                     F::ChannelID,
+                     Channel::Param
+                 >,
+                 ThreadedStream<
+                     DatagramCodecStream<
+                         Msg,
+                         <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                         MsgCodec
+                     >
+                 >,
+                 DispatchEntryReporter<
+                     Msg,
+                     StreamID<
+                         <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                         F::ChannelID,
+                         Channel::Param
+                     >,
+                     DatagramCodecStream<
+                         Msg,
+                         <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                         MsgCodec
+                     >,
+                     PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                     Recv
+                 >,
+                 Ctx
+            >,
+            Ctx
         >,
         Ctx
     >
@@ -441,7 +477,7 @@ where
             >
         >
     >{
-        let (size_hint, dispatch_config) = config.take();
+        let (size_hint, dispatch_config, mode_config) = config.take();
 
         debug!(target: "multicast-comm",
                "initializing channels");
@@ -473,10 +509,10 @@ where
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let pull = match size_hint {
             Some(size_hint) => PullStreamsDispatchThread::with_capacity(
-                dispatcher, listener, shutdown, ctx, size_hint
+                mode_config, dispatcher, listener, shutdown, ctx, size_hint
             ),
             None => PullStreamsDispatchThread::new(
-                dispatcher, listener, shutdown, ctx
+                mode_config, dispatcher, listener, shutdown, ctx
             )
         };
 

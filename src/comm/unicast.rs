@@ -75,6 +75,7 @@ use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
 use constellation_streams::threads::push::private::PushStreamPrivateThread;
+use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
 use log::debug;
 use log::error;
 use log::info;
@@ -128,8 +129,8 @@ pub struct UnicastComm<
     Ctx
 > where
     Msg: 'static + Clone + Send,
-    Msgs: PrivateMsgs<Msg>,
-    SessionAuth: Clone
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
+    SessionAuth: 'static + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
@@ -137,8 +138,8 @@ pub struct UnicastComm<
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as Codec<Msg>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: FarChannelOwnedFlows<F, SessionAuth, Xfrm>
+    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
+    Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
         + FarChannelCreate
         + Send
         + Sync,
@@ -158,7 +159,7 @@ pub struct UnicastComm<
         'static + ConcurrentStream + Send,
     <Channel::Xfrm as DatagramXfrm>::PeerAddr:
         'static + Eq + Hash + Send + Sync,
-    F: OwnedFlowsCreate<
+    F: 'static + OwnedFlowsCreate<
             Channel::Socket,
             Channel::Nego,
             SessionAuth,
@@ -168,7 +169,7 @@ pub struct UnicastComm<
     F::CreateParam: Clone + Default + Send + Sync,
     F::Reporter: Clone + Send + Sync,
     F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm:
+    Xfrm: 'static +
         DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
     Xfrm::CreateParam: Clone + Default + Send + Sync,
     Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
@@ -193,7 +194,6 @@ pub struct UnicastComm<
         + Sync {
     endpoint: PhantomData<Endpoint>,
     push: PushStreamPrivateThread<
-        Msg,
         Msgs,
         StreamSelector<
             Epochs,
@@ -223,6 +223,40 @@ pub struct UnicastComm<
                 Xfrm
             >,
             Resolver,
+            Ctx
+        >,
+        PrivateSmallObjPushMode<
+            Msg,
+            StreamSelector<
+                Epochs,
+                FarChannelRegistryChannels<
+                    Msg,
+                    MsgCodec,
+                    PullStreamsReporter<
+                        Msg,
+                        Msg,
+                        ThreadedFlowsPullStreamListener<
+                            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                            Msg,
+                            MsgCodec,
+                            StreamID<
+                                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                                F::ChannelID,
+                                Channel::Param
+                            >,
+                            SessionAuth::Prin
+                        >,
+                        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                        Recv
+                    >,
+                    Channel,
+                    F,
+                    SessionAuth,
+                    Xfrm
+                >,
+                Resolver,
+                Ctx
+            >,
             Ctx
         >,
         Ctx
@@ -477,7 +511,7 @@ where
         debug!(target: "unicast-comm",
                "initializing pull streams");
 
-        let party_config = config.take();
+        let (party_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
@@ -526,6 +560,7 @@ where
 
         let reporter = stream.reporter();
         let sender = PushStreamPrivateThread::create(
+            mode_config,
             ctx,
             msgs,
             sender_notify.clone(),
