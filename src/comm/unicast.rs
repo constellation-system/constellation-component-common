@@ -74,8 +74,8 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::private::PushStreamPrivateThread;
 use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
+use constellation_streams::threads::push::PushStreamThread;
 use log::debug;
 use log::error;
 use log::info;
@@ -193,7 +193,7 @@ pub struct UnicastComm<
         + Send
         + Sync {
     endpoint: PhantomData<Endpoint>,
-    push: PushStreamPrivateThread<
+    push: PushStreamThread<
         Msgs,
         StreamSelector<
             Epochs,
@@ -559,7 +559,7 @@ where
             .map_err(|err| UnicastCommCreateError::Refresh { err: err })?;
 
         let reporter = stream.reporter();
-        let sender = PushStreamPrivateThread::create(
+        let sender = PushStreamThread::create(
             mode_config,
             ctx,
             msgs,

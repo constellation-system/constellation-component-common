@@ -222,35 +222,35 @@ pub struct DispatchComm<
         PrivateSmallObjPushMode<
             Msg,
             DispatchSelector<
-                 Epochs,
-                 StreamID<
-                     <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                     F::ChannelID,
-                     Channel::Param
-                 >,
-                 ThreadedStream<
-                     DatagramCodecStream<
-                         Msg,
-                         <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                         MsgCodec
-                     >
-                 >,
-                 DispatchEntryReporter<
-                     Msg,
-                     StreamID<
-                         <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                         F::ChannelID,
-                         Channel::Param
-                     >,
-                     DatagramCodecStream<
-                         Msg,
-                         <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                         MsgCodec
-                     >,
-                     PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                     Recv
-                 >,
-                 Ctx
+                Epochs,
+                StreamID<
+                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                    F::ChannelID,
+                    Channel::Param
+                >,
+                ThreadedStream<
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >
+                >,
+                DispatchEntryReporter<
+                    Msg,
+                    StreamID<
+                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                        F::ChannelID,
+                        Channel::Param
+                    >,
+                    DatagramCodecStream<
+                        Msg,
+                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                        MsgCodec
+                    >,
+                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                    Recv
+                >,
+                Ctx
             >,
             Ctx
         >,
@@ -509,10 +509,19 @@ where
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let pull = match size_hint {
             Some(size_hint) => PullStreamsDispatchThread::with_capacity(
-                mode_config, dispatcher, listener, shutdown, ctx, size_hint
+                mode_config,
+                dispatcher,
+                listener,
+                shutdown,
+                ctx,
+                size_hint
             ),
             None => PullStreamsDispatchThread::new(
-                mode_config, dispatcher, listener, shutdown, ctx
+                mode_config,
+                dispatcher,
+                listener,
+                shutdown,
+                ctx
             )
         };
 

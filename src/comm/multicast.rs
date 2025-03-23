@@ -78,7 +78,8 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::shared::PushStreamSharedThread;
+use constellation_streams::threads::push::shared::SharedSmallObjPushMode;
+use constellation_streams::threads::push::PushStreamThread;
 use log::debug;
 use log::error;
 use log::info;
@@ -134,8 +135,8 @@ pub struct MulticastComm<
     Ctx
 > where
     Msg: 'static + Clone + Send,
-    Msgs: SharedMsgs<PartyStreamIdx, Msg>,
-    SessionAuth: Clone
+    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    SessionAuth: 'static + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
@@ -143,8 +144,8 @@ pub struct MulticastComm<
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
     <MsgCodec as Codec<Msg>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: FarChannelOwnedFlows<F, SessionAuth, Xfrm>
+    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
+    Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
         + FarChannelCreate
         + Send
         + Sync,
@@ -164,7 +165,7 @@ pub struct MulticastComm<
         'static + ConcurrentStream + Send,
     <Channel::Xfrm as DatagramXfrm>::PeerAddr:
         'static + Eq + Hash + Send + Sync,
-    F: OwnedFlowsCreate<
+    F: 'static + OwnedFlowsCreate<
             Channel::Socket,
             Channel::Nego,
             SessionAuth,
@@ -174,7 +175,7 @@ pub struct MulticastComm<
     F::CreateParam: Clone + Default + Send + Sync,
     F::Reporter: Clone + Send + Sync,
     F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm:
+    Xfrm: 'static +
         DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
     Xfrm::CreateParam: Clone + Default + Send + Sync,
     Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
@@ -199,8 +200,7 @@ pub struct MulticastComm<
         + Sync {
     endpoint: PhantomData<Endpoint>,
     push:
-        PushStreamSharedThread<
-            Msg,
+        PushStreamThread<
             Msgs,
             StreamMulticaster<
                 SessionAuth::Prin,
@@ -238,6 +238,48 @@ pub struct MulticastComm<
                     Resolver,
                     Ctx
                 >,
+                Ctx
+            >,
+            SharedSmallObjPushMode<
+                Msg,
+                StreamMulticaster<
+                        SessionAuth::Prin,
+                    PartyStreamIdx,
+                    Msg,
+                    StreamSelector<
+                            Epochs,
+                        FarChannelRegistryChannels<
+                                Msg,
+                            MsgCodec,
+                            PullStreamsReporter<
+                                    Msg,
+                                Msg,
+                                ThreadedFlowsPullStreamListener<
+                                        <Channel::Nego as OwnedFlowNegotiator<
+                                                F::Flow
+                                                >>::Flow,
+                                    Msg,
+                                    MsgCodec,
+                                    StreamID<
+                                            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                                        F::ChannelID,
+                                        Channel::Param
+                                            >,
+                                    SessionAuth::Prin
+                                        >,
+                                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                                Recv
+                                    >,
+                            Channel,
+                            F,
+                            SessionAuth,
+                            Xfrm
+                                >,
+                        Resolver,
+                        Ctx
+                            >,
+                    Ctx
+                        >,
                 Ctx
             >,
             Ctx
@@ -497,7 +539,7 @@ where
         debug!(target: "multicast-comm",
                "initializing pull streams");
 
-        let (slots_config, parties_config) = config.take();
+        let (slots_config, parties_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
@@ -592,7 +634,8 @@ where
         };
 
         let reporter = stream.reporter();
-        let sender = PushStreamSharedThread::create(
+        let sender = PushStreamThread::create(
+            mode_config,
             ctx,
             msgs,
             sender_notify.clone(),
