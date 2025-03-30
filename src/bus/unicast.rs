@@ -74,18 +74,18 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
+use constellation_streams::threads::push::private::PrivateDatagramPushMode;
 use constellation_streams::threads::push::PushStreamThread;
 use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::UnicastSmallObjBusConfig;
+use crate::config::UnicastDatagramBusConfig;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
 
-pub type CompoundUnicastSmallObjBus<
+pub type CompoundUnicastDatagramBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -94,7 +94,7 @@ pub type CompoundUnicastSmallObjBus<
     SessionAuth,
     Xfrm,
     Ctx
-> = UnicastSmallObjBus<
+> = UnicastDatagramBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -114,7 +114,7 @@ pub type CompoundUnicastSmallObjBus<
     Ctx
 >;
 
-pub struct UnicastSmallObjBus<
+pub struct UnicastDatagramBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -225,7 +225,7 @@ pub struct UnicastSmallObjBus<
             Resolver,
             Ctx
         >,
-        PrivateSmallObjPushMode<
+        PrivateDatagramPushMode<
             Msg,
             StreamSelector<
                 Epochs,
@@ -308,16 +308,16 @@ pub struct UnicastSmallObjBus<
     >
 }
 
-/// Cleanup object for [UnicastSmallObjBus].
-pub struct UnicastSmallObjBusCleanup {
+/// Cleanup object for [UnicastDatagramBus].
+pub struct UnicastDatagramBusCleanup {
     notify: Notify,
     sender_join: JoinHandle<()>,
     pull_join: JoinHandle<()>
 }
 
-/// Type of errors that can occur when creating a [UnicastSmallObjBus].
+/// Type of errors that can occur when creating a [UnicastDatagramBus].
 #[derive(Debug)]
-pub enum UnicastSmallObjBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
+pub enum UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
     /// Error acquiring channels.
     Acquire {
         /// The error that occurred while acquiring the channels.
@@ -352,7 +352,7 @@ impl<
         Endpoint,
         Ctx
     >
-    UnicastSmallObjBus<
+    UnicastDatagramBus<
         Msg,
         MsgCodec,
         Msgs,
@@ -440,7 +440,7 @@ where
         + Sync
 {
     pub fn create(
-        config: UnicastSmallObjBusConfig<
+        config: UnicastDatagramBusConfig<
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
             Epochs::Config,
             Endpoint
@@ -461,7 +461,7 @@ where
         msgs: Msgs
     ) -> Result<
         Self,
-        UnicastSmallObjBusCreateError<
+        UnicastDatagramBusCreateError<
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
                     Channel::AcquireError,
@@ -505,7 +505,9 @@ where
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| UnicastSmallObjBusCreateError::Acquire { err: err })?;
+            .map_err(|err| UnicastDatagramBusCreateError::Acquire {
+                err: err
+            })?;
 
         // Bring up the pull-side.
         debug!(target: "unicast-small-obj-bus",
@@ -514,8 +516,10 @@ where
         let (party_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
-        let msg_codec = MsgCodec::create(MsgCodec::Param::default())
-            .map_err(|err| UnicastSmallObjBusCreateError::MsgCodec { err: err })?;
+        let msg_codec =
+            MsgCodec::create(MsgCodec::Param::default()).map_err(|err| {
+                UnicastDatagramBusCreateError::MsgCodec { err: err }
+            })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
@@ -550,13 +554,13 @@ where
             stream_reporter.clone(),
             party_config
         )
-        .map_err(|err| UnicastSmallObjBusCreateError::Stream { err: err })?;
+        .map_err(|err| UnicastDatagramBusCreateError::Stream { err: err })?;
 
         // Refresh the streams to ensure no bad stream
         // reporting.
-        stream
-            .refresh(&mut ctx)
-            .map_err(|err| UnicastSmallObjBusCreateError::Refresh { err: err })?;
+        stream.refresh(&mut ctx).map_err(|err| {
+            UnicastDatagramBusCreateError::Refresh { err: err }
+        })?;
 
         let reporter = stream.reporter();
         let sender = PushStreamThread::create(
@@ -568,7 +572,7 @@ where
             shutdown.clone()
         );
 
-        Ok(UnicastSmallObjBus {
+        Ok(UnicastDatagramBus {
             endpoint: PhantomData,
             reporter: reporter,
             pull: pull_listener,
@@ -581,10 +585,10 @@ where
         self.push.notify()
     }
 
-    /// Consume this `UnicastSmallObjBus`, start the threads, and return a
+    /// Consume this `UnicastDatagramBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> UnicastSmallObjBusCleanup {
-        let UnicastSmallObjBus {
+    pub fn start(self) -> UnicastDatagramBusCleanup {
+        let UnicastDatagramBus {
             pull,
             push,
             reporter,
@@ -594,7 +598,7 @@ where
         let notify = push.notify();
         let sender_join = push.start();
 
-        UnicastSmallObjBusCleanup {
+        UnicastDatagramBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
@@ -602,7 +606,7 @@ where
     }
 }
 
-impl UnicastSmallObjBusCleanup {
+impl UnicastDatagramBusCleanup {
     pub fn cleanup(self) {
         if let Err(err) = self.notify.notify() {
             error!(target: "unicast-small-obj-bus-cleanup",
@@ -629,7 +633,7 @@ impl UnicastSmallObjBusCleanup {
 }
 
 impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for UnicastSmallObjBusCreateError<Acquire, MsgCodec, Stream, Refresh>
+    for UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh>
 where
     Acquire: Display,
     MsgCodec: Display,
@@ -641,10 +645,10 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            UnicastSmallObjBusCreateError::Acquire { err } => err.fmt(f),
-            UnicastSmallObjBusCreateError::MsgCodec { err } => err.fmt(f),
-            UnicastSmallObjBusCreateError::Stream { err } => err.fmt(f),
-            UnicastSmallObjBusCreateError::Refresh { err } => err.fmt(f)
+            UnicastDatagramBusCreateError::Acquire { err } => err.fmt(f),
+            UnicastDatagramBusCreateError::MsgCodec { err } => err.fmt(f),
+            UnicastDatagramBusCreateError::Stream { err } => err.fmt(f),
+            UnicastDatagramBusCreateError::Refresh { err } => err.fmt(f)
         }
     }
 }

@@ -26,6 +26,7 @@ use std::thread::JoinHandle;
 use std::vec::IntoIter;
 
 use constellation_auth::authn::AuthNMsgRecv;
+use constellation_auth::authn::MsgAuthN;
 use constellation_auth::authn::PassthruMsgAuthN;
 use constellation_auth::authn::SessionAuthN;
 use constellation_channels::config::ChannelRegistryChannelsConfig;
@@ -53,20 +54,25 @@ use constellation_channels::far::FarChannelFlowsError;
 use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_channels::resolve::MixedResolver;
-use constellation_common::codec::Codec;
 use constellation_common::codec::DatagramCodec;
+use constellation_common::hashid::HashAlgo;
 use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
 use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::SharedMsgs;
 use constellation_common::net::Socket;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
+use constellation_streams::frags::OutboundFrags;
+use constellation_streams::large_obj::LargeObjID;
+use constellation_streams::large_obj::LargeObjMsg;
+use constellation_streams::large_obj::LargeObjMsgCodec;
+use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::multicast::StreamMulticaster;
+use constellation_streams::multicast::StreamMulticasterFrags;
 use constellation_streams::multicast::StreamMulticasterReporter;
 use constellation_streams::select::StreamSelector;
 use constellation_streams::select::StreamSelectorCreateError;
@@ -78,32 +84,38 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::shared::SharedDatagramPushMode;
+use constellation_streams::threads::push::shared::SharedLargeObjPushMode;
 use constellation_streams::threads::push::PushStreamThread;
 use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::MulticastDatagramBusConfig;
+use crate::config::MulticastLargeObjBusConfig;
 use crate::config::PartiesConfig;
 use crate::PartyStreamIdx;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
 
-pub type CompoundMulticastDatagramBus<
+pub type CompoundMulticastLargeObjBus<
     Msg,
-    MsgCodec,
-    Msgs,
+    Wrapper,
+    WrapperCodec,
+    H,
+    IDs,
+    MsgAuth,
     Recv,
     Epochs,
     SessionAuth,
     Xfrm,
     Ctx
-> = MulticastDatagramBus<
+> = MulticastLargeObjBus<
     Msg,
-    MsgCodec,
-    Msgs,
+    Wrapper,
+    WrapperCodec,
+    H,
+    IDs,
+    MsgAuth,
     Recv,
     Epochs,
     CompoundFarChannel,
@@ -120,10 +132,13 @@ pub type CompoundMulticastDatagramBus<
     Ctx
 >;
 
-pub struct MulticastDatagramBus<
+pub struct MulticastLargeObjBus<
     Msg,
-    MsgCodec,
-    Msgs,
+    Wrapper,
+    WrapperCodec,
+    H,
+    IDs,
+    MsgAuth,
     Recv,
     Epochs,
     Channel,
@@ -135,15 +150,20 @@ pub struct MulticastDatagramBus<
     Ctx
 > where
     Msg: 'static + Clone + Send,
-    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    Wrapper: 'static + Clone + Send,
+    MsgAuth: 'static + Clone + MsgAuthN<Msg, Wrapper, SessionPrin = SessionAuth::Prin> + Send,
+    MsgAuth::SessionPrin: Send + Sync,
+    IDs: 'static + Clone + IDGen + Iterator<Item = LargeObjID> + Send,
+    H: 'static + Clone + Default + HashAlgo + Send,
+    H::HashID: 'static + Clone + Display + Hash + Eq + Send,
     SessionAuth: 'static + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
+    WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
+    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
         + FarChannelCreate
@@ -201,25 +221,35 @@ pub struct MulticastDatagramBus<
     endpoint: PhantomData<Endpoint>,
     push:
         PushStreamThread<
-            Msgs,
+            LargeObjProto<
+                H::HashID,
+                Msg,
+                Wrapper,
+                MsgAuth,
+                PartyStreamIdx,
+                WrapperCodec,
+                IDs,
+                Recv,
+                StreamMulticasterFrags<PartyStreamIdx, OutboundFrags>
+            >,
             StreamMulticaster<
                 SessionAuth::Prin,
                 PartyStreamIdx,
-                Msg,
+                LargeObjMsg<H::HashID>,
                 StreamSelector<
                     Epochs,
                     FarChannelRegistryChannels<
-                        Msg,
-                        MsgCodec,
+                        LargeObjMsg<H::HashID>,
+                        LargeObjMsgCodec<H>,
                         PullStreamsReporter<
-                            Msg,
-                            Msg,
+                            LargeObjMsg<H::HashID>,
+                            LargeObjMsg<H::HashID>,
                             ThreadedFlowsPullStreamListener<
                                 <Channel::Nego as OwnedFlowNegotiator<
                                     F::Flow
                                 >>::Flow,
-                                Msg,
-                                MsgCodec,
+                                LargeObjMsg<H::HashID>,
+                                LargeObjMsgCodec<H>,
                                 StreamID<
                                     <Channel::Xfrm as DatagramXfrm>::PeerAddr,
                                     F::ChannelID,
@@ -227,8 +257,24 @@ pub struct MulticastDatagramBus<
                                 >,
                                 SessionAuth::Prin
                             >,
-                            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                            Recv
+                            PassthruMsgAuthN<
+                                LargeObjMsg<H::HashID>,
+                                SessionAuth::Prin
+                            >,
+                            LargeObjProto<
+                                H::HashID,
+                                Msg,
+                                Wrapper,
+                                MsgAuth,
+                                PartyStreamIdx,
+                                WrapperCodec,
+                                IDs,
+                                Recv,
+                                StreamMulticasterFrags<
+                                    PartyStreamIdx,
+                                    OutboundFrags
+                                >
+                            >,
                         >,
                         Channel,
                         F,
@@ -240,57 +286,73 @@ pub struct MulticastDatagramBus<
                 >,
                 Ctx
             >,
-            SharedDatagramPushMode<
-                Msg,
+            SharedLargeObjPushMode<
+                H::HashID,
                 StreamMulticaster<
-                        SessionAuth::Prin,
+                    SessionAuth::Prin,
                     PartyStreamIdx,
-                    Msg,
+                    LargeObjMsg<H::HashID>,
                     StreamSelector<
-                            Epochs,
+                        Epochs,
                         FarChannelRegistryChannels<
-                                Msg,
-                            MsgCodec,
+                            LargeObjMsg<H::HashID>,
+                            LargeObjMsgCodec<H>,
                             PullStreamsReporter<
-                                    Msg,
-                                Msg,
+                                LargeObjMsg<H::HashID>,
+                                LargeObjMsg<H::HashID>,
                                 ThreadedFlowsPullStreamListener<
-                                        <Channel::Nego as OwnedFlowNegotiator<
-                                                F::Flow
-                                                >>::Flow,
-                                    Msg,
-                                    MsgCodec,
+                                    <Channel::Nego as OwnedFlowNegotiator<
+                                        F::Flow
+                                    >>::Flow,
+                                    LargeObjMsg<H::HashID>,
+                                    LargeObjMsgCodec<H>,
                                     StreamID<
-                                            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
                                         F::ChannelID,
                                         Channel::Param
-                                            >,
-                                    SessionAuth::Prin
-                                        >,
-                                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                                Recv
                                     >,
+                                    SessionAuth::Prin
+                                >,
+                                PassthruMsgAuthN<
+                                    LargeObjMsg<H::HashID>,
+                                    SessionAuth::Prin
+                                >,
+                                LargeObjProto<
+                                    H::HashID,
+                                    Msg,
+                                    Wrapper,
+                                    MsgAuth,
+                                    PartyStreamIdx,
+                                    WrapperCodec,
+                                    IDs,
+                                    Recv,
+                                    StreamMulticasterFrags<
+                                        PartyStreamIdx,
+                                        OutboundFrags
+                                    >
+                                >
+                            >,
                             Channel,
                             F,
                             SessionAuth,
                             Xfrm
-                                >,
+                        >,
                         Resolver,
                         Ctx
-                            >,
+                    >,
                     Ctx
-                        >,
+                >,
                 Ctx
             >,
             Ctx
         >,
     pull: PullStreamsListenThread<
-        Msg,
-        Msg,
+        LargeObjMsg<H::HashID>,
+        LargeObjMsg<H::HashID>,
         ThreadedFlowsPullStreamListener<
             <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
+            LargeObjMsg<H::HashID>,
+            LargeObjMsgCodec<H>,
             StreamID<
                 <Channel::Xfrm as DatagramXfrm>::PeerAddr,
                 F::ChannelID,
@@ -304,15 +366,15 @@ pub struct MulticastDatagramBus<
         StreamSelectorReporter<
             Epochs,
             FarChannelRegistryChannels<
-                Msg,
-                MsgCodec,
+                LargeObjMsg<H::HashID>,
+                LargeObjMsgCodec<H>,
                 PullStreamsReporter<
-                    Msg,
-                    Msg,
+                    LargeObjMsg<H::HashID>,
+                    LargeObjMsg<H::HashID>,
                     ThreadedFlowsPullStreamListener<
                         <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        Msg,
-                        MsgCodec,
+                        LargeObjMsg<H::HashID>,
+                        LargeObjMsgCodec<H>,
                         StreamID<
                             <Channel::Xfrm as DatagramXfrm>::PeerAddr,
                             F::ChannelID,
@@ -320,8 +382,21 @@ pub struct MulticastDatagramBus<
                         >,
                         SessionAuth::Prin
                     >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
+                    PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
+                    LargeObjProto<
+                        H::HashID,
+                        Msg,
+                        Wrapper,
+                        MsgAuth,
+                        PartyStreamIdx,
+                        WrapperCodec,
+                        IDs,
+                        Recv,
+                        StreamMulticasterFrags<
+                            PartyStreamIdx,
+                            OutboundFrags
+                        >
+                    >,
                 >,
                 Channel,
                 F,
@@ -334,16 +409,16 @@ pub struct MulticastDatagramBus<
     >
 }
 
-/// Cleanup object for [MulticastDatagramBus].
-pub struct MulticastDatagramBusCleanup {
+/// Cleanup object for [MulticastLargeObjBus].
+pub struct MulticastLargeObjBusCleanup {
     notify: Notify,
     sender_join: JoinHandle<()>,
     pull_join: JoinHandle<()>
 }
 
-/// Type of errors that can occur when creating a [MulticastDatagramBus].
+/// Type of errors that can occur when creating a [MulticastLargeObjBus].
 #[derive(Debug)]
-pub enum MulticastDatagramBusRunError<Acquire, MsgCodec, Stream, Refresh> {
+pub enum MulticastLargeObjBusRunError<Acquire, MsgCodec, Stream, Refresh> {
     /// Error acquiring channels.
     Acquire {
         /// The error that occurred while acquiring the channels.
@@ -366,8 +441,11 @@ pub enum MulticastDatagramBusRunError<Acquire, MsgCodec, Stream, Refresh> {
 
 impl<
         Msg,
-        MsgCodec,
-        Msgs,
+        Wrapper,
+        WrapperCodec,
+        H,
+        IDs,
+        MsgAuth,
         Recv,
         Epochs,
         Channel,
@@ -378,10 +456,13 @@ impl<
         Endpoint,
         Ctx
     >
-    MulticastDatagramBus<
+    MulticastLargeObjBus<
         Msg,
-        MsgCodec,
-        Msgs,
+        Wrapper,
+        WrapperCodec,
+        H,
+        IDs,
+        MsgAuth,
         Recv,
         Epochs,
         Channel,
@@ -394,16 +475,24 @@ impl<
     >
 where
     Msg: 'static + Clone + Send,
-    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    Wrapper: 'static + Clone + Send,
+    MsgAuth: 'static
+        + Clone
+        + MsgAuthN<Msg, Wrapper, SessionPrin = SessionAuth::Prin>
+        + Send,
+    MsgAuth::SessionPrin: Send + Sync,
+    IDs: 'static + Clone + IDGen + Iterator<Item = LargeObjID> + Send,
+    H: 'static + Clone + Default + HashAlgo + Send,
+    H::HashID: 'static + Clone + Display + Hash + Eq + Send,
     SessionAuth: 'static
         + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
+    WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
+    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
         + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -467,9 +556,11 @@ where
 {
     pub fn create(
         self_party: SessionAuth::Prin,
-        config: MulticastDatagramBusConfig<
+        config: MulticastLargeObjBusConfig<
             SessionAuth::Prin,
-            ChannelRegistryChannelsConfig<MsgCodec::Param>,
+            ChannelRegistryChannelsConfig<
+                <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::Param
+            >,
             Epochs::Config,
             Endpoint
         >,
@@ -485,11 +576,23 @@ where
         mut ctx: Ctx,
         shutdown: ShutdownFlag,
         sender_notify: Notify,
-        upstream_msg_recv: Recv,
-        msgs: Msgs
+        proto: LargeObjProto<
+            H::HashID,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            PartyStreamIdx,
+            WrapperCodec,
+            IDs,
+            Recv,
+            StreamMulticasterFrags<
+                PartyStreamIdx,
+                OutboundFrags
+            >
+        >
     ) -> Result<
         Self,
-        MulticastDatagramBusRunError<
+        MulticastLargeObjBusRunError<
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
                     Channel::AcquireError,
@@ -502,9 +605,11 @@ where
                     <Channel::Acquired as FarChannelAcquired>::WrapError
                 >
             >,
-            MsgCodec::CreateError,
+            <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::CreateError,
             StreamSelectorCreateError<
-                FarChannelRegistryChannelsCreateError<MsgCodec::CreateError>,
+                FarChannelRegistryChannelsCreateError<
+                    <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::CreateError
+                >,
                 Resolver::CreateError
             >,
             ThreadedStreamSelectorError<
@@ -533,7 +638,7 @@ where
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| MulticastDatagramBusRunError::Acquire {
+            .map_err(|err| MulticastLargeObjBusRunError::Acquire {
                 err: err
             })?;
 
@@ -544,15 +649,14 @@ where
         let (slots_config, parties_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
-        let msg_codec =
-            MsgCodec::create(MsgCodec::Param::default()).map_err(|err| {
-                MulticastDatagramBusRunError::MsgCodec { err: err }
-            })?;
+        let msg_codec = LargeObjMsgCodec::create(()).map_err(|err| {
+            MulticastLargeObjBusRunError::MsgCodec { err: err }
+        })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
             listener,
-            upstream_msg_recv,
+            proto.clone(),
             shutdown.clone(),
             PassthruMsgAuthN::default(),
             1
@@ -577,9 +681,15 @@ where
                         let mut stream = StreamSelector::<
                             Epochs,
                             FarChannelRegistryChannels<
-                                Msg,
-                                MsgCodec,
-                                PullStreamsReporter<Msg, _, _, _, _>,
+                                LargeObjMsg<H::HashID>,
+                                LargeObjMsgCodec<H>,
+                                PullStreamsReporter<
+                                    LargeObjMsg<H::HashID>,
+                                    _,
+                                    _,
+                                    _,
+                                    _
+                                >,
                                 Channel,
                                 F,
                                 SessionAuth,
@@ -594,12 +704,12 @@ where
                             party_config
                         )
                         .map_err(|err| {
-                            MulticastDatagramBusRunError::Stream { err: err }
+                            MulticastLargeObjBusRunError::Stream { err: err }
                         })?;
                         // Refresh the streams to ensure no bad stream
                         // reporting.
                         stream.refresh(&mut ctx).map_err(|err| {
-                            MulticastDatagramBusRunError::Refresh { err: err }
+                            MulticastLargeObjBusRunError::Refresh { err: err }
                         })?;
                         party_streams.push((party, stream))
                     } else {
@@ -612,13 +722,19 @@ where
                 let stream: StreamMulticaster<
                     SessionAuth::Prin,
                     PartyStreamIdx,
-                    Msg,
+                    LargeObjMsg<H::HashID>,
                     StreamSelector<
                         Epochs,
                         FarChannelRegistryChannels<
-                            Msg,
-                            MsgCodec,
-                            PullStreamsReporter<Msg, _, _, _, _>,
+                            LargeObjMsg<H::HashID>,
+                            LargeObjMsgCodec<H>,
+                            PullStreamsReporter<
+                                LargeObjMsg<H::HashID>,
+                                _,
+                                _,
+                                _,
+                                _
+                            >,
                             Channel,
                             F,
                             SessionAuth,
@@ -641,13 +757,13 @@ where
         let sender = PushStreamThread::create(
             mode_config,
             ctx,
-            msgs,
+            proto,
             sender_notify.clone(),
             stream,
             shutdown.clone()
         );
 
-        Ok(MulticastDatagramBus {
+        Ok(MulticastLargeObjBus {
             endpoint: PhantomData,
             reporter: reporter,
             pull: pull_listener,
@@ -667,10 +783,10 @@ where
         self.push.notify()
     }
 
-    /// Consume this `MulticastDatagramBus`, start the threads, and return a
-    /// cleanup object.
-    pub fn start(self) -> MulticastDatagramBusCleanup {
-        let MulticastDatagramBus {
+    // Consume this `MulticastLargeObjBus`, start the threads, and return a
+    // cleanup object.
+    pub fn start(self) -> MulticastLargeObjBusCleanup {
+        let MulticastLargeObjBus {
             pull,
             push,
             reporter,
@@ -680,7 +796,7 @@ where
         let notify = push.notify();
         let sender_join = push.start();
 
-        MulticastDatagramBusCleanup {
+        MulticastLargeObjBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
@@ -688,7 +804,7 @@ where
     }
 }
 
-impl MulticastDatagramBusCleanup {
+impl MulticastLargeObjBusCleanup {
     pub fn cleanup(self) {
         if let Err(err) = self.notify.notify() {
             error!(target: "multicast-bus-cleanup",
@@ -718,7 +834,7 @@ impl MulticastDatagramBusCleanup {
 }
 
 impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for MulticastDatagramBusRunError<Acquire, MsgCodec, Stream, Refresh>
+    for MulticastLargeObjBusRunError<Acquire, MsgCodec, Stream, Refresh>
 where
     Acquire: Display,
     MsgCodec: Display,
@@ -730,10 +846,10 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            MulticastDatagramBusRunError::Acquire { err } => err.fmt(f),
-            MulticastDatagramBusRunError::MsgCodec { err } => err.fmt(f),
-            MulticastDatagramBusRunError::Stream { err } => err.fmt(f),
-            MulticastDatagramBusRunError::Refresh { err } => err.fmt(f)
+            MulticastLargeObjBusRunError::Acquire { err } => err.fmt(f),
+            MulticastLargeObjBusRunError::MsgCodec { err } => err.fmt(f),
+            MulticastLargeObjBusRunError::Stream { err } => err.fmt(f),
+            MulticastLargeObjBusRunError::Refresh { err } => err.fmt(f)
         }
     }
 }

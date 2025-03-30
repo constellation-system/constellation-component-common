@@ -145,7 +145,7 @@ pub struct UnicastLargeObjBus<
     Msg: 'static + Clone + Send,
     Wrapper: 'static + Clone + Send,
     MsgAuth: 'static + Clone + MsgAuthN<Msg, Wrapper, SessionPrin = SessionAuth::Prin> + Send,
-    MsgAuth::SessionPrin: Send,
+    MsgAuth::SessionPrin: Send + Sync,
     IDs: 'static + Clone + IDGen + Iterator<Item = LargeObjID> + Send,
     H: 'static + Clone + Default + HashAlgo + Send,
     H::HashID: 'static + Clone + Display + Hash + Eq + Send,
@@ -213,7 +213,17 @@ pub struct UnicastLargeObjBus<
         + Sync {
     endpoint: PhantomData<Endpoint>,
     push: PushStreamThread<
-        LargeObjProto<H::HashID, Msg, Wrapper, MsgAuth, WrapperCodec, IDs, Recv, OutboundFrags>,
+        LargeObjProto<
+            H::HashID,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            (),
+            WrapperCodec,
+            IDs,
+            Recv,
+            OutboundFrags
+        >,
         StreamSelector<
             Epochs,
             FarChannelRegistryChannels<
@@ -234,7 +244,17 @@ pub struct UnicastLargeObjBus<
                         SessionAuth::Prin
                     >,
                     PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
-                    LargeObjProto<H::HashID, Msg, Wrapper, MsgAuth, WrapperCodec, IDs, Recv, OutboundFrags>
+                    LargeObjProto<
+                        H::HashID,
+                        Msg,
+                        Wrapper,
+                        MsgAuth,
+                        (),
+                        WrapperCodec,
+                        IDs,
+                        Recv,
+                        OutboundFrags
+                    >
                 >,
                 Channel,
                 F,
@@ -265,8 +285,21 @@ pub struct UnicastLargeObjBus<
                             >,
                             SessionAuth::Prin
                         >,
-                        PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
-                        LargeObjProto<H::HashID, Msg, Wrapper, MsgAuth, WrapperCodec, IDs, Recv, OutboundFrags>
+                        PassthruMsgAuthN<
+                            LargeObjMsg<H::HashID>,
+                            SessionAuth::Prin
+                        >,
+                        LargeObjProto<
+                            H::HashID,
+                            Msg,
+                            Wrapper,
+                            MsgAuth,
+                            (),
+                            WrapperCodec,
+                            IDs,
+                            Recv,
+                            OutboundFrags
+                        >
                     >,
                     Channel,
                     F,
@@ -315,7 +348,17 @@ pub struct UnicastLargeObjBus<
                     SessionAuth::Prin
                 >,
                 PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
-                LargeObjProto<H::HashID, Msg, Wrapper, MsgAuth, WrapperCodec, IDs, Recv, OutboundFrags>
+                LargeObjProto<
+                    H::HashID,
+                    Msg,
+                    Wrapper,
+                    MsgAuth,
+                    (),
+                    WrapperCodec,
+                    IDs,
+                    Recv,
+                    OutboundFrags
+                >
             >,
             Channel,
             F,
@@ -358,56 +401,62 @@ pub enum UnicastLargeObjBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
 }
 
 impl<
-    Msg,
-    Wrapper,
-    WrapperCodec,
-    H,
-    IDs,
-    MsgAuth,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Ctx
+        Msg,
+        Wrapper,
+        WrapperCodec,
+        H,
+        IDs,
+        MsgAuth,
+        Recv,
+        Epochs,
+        Channel,
+        F,
+        SessionAuth,
+        Xfrm,
+        Resolver,
+        Endpoint,
+        Ctx
     >
-UnicastLargeObjBus<
-    Msg,
-    Wrapper,
-    WrapperCodec,
-    H,
-    IDs,
-    MsgAuth,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Ctx
-> where
+    UnicastLargeObjBus<
+        Msg,
+        Wrapper,
+        WrapperCodec,
+        H,
+        IDs,
+        MsgAuth,
+        Recv,
+        Epochs,
+        Channel,
+        F,
+        SessionAuth,
+        Xfrm,
+        Resolver,
+        Endpoint,
+        Ctx
+    >
+where
     Msg: 'static + Clone + Send,
     Wrapper: 'static + Clone + Send,
-    MsgAuth: 'static + Clone + MsgAuthN<Msg, Wrapper, SessionPrin = SessionAuth::Prin> + Send,
+    MsgAuth: 'static
+        + Clone
+        + MsgAuthN<Msg, Wrapper, SessionPrin = SessionAuth::Prin>
+        + Send,
     MsgAuth::SessionPrin: Send,
     IDs: 'static + Clone + IDGen + Iterator<Item = LargeObjID> + Send,
     H: 'static + Clone + Default + HashAlgo + Send,
     H::HashID: 'static + Clone + Display + Hash + Eq + Send,
-    SessionAuth: 'static + Clone
+    SessionAuth: 'static
+        + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
         + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
+    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send + Sync,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
     <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
+    Channel: 'static
+        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
         + FarChannelCreate
         + Send
         + Sync,
@@ -427,18 +476,23 @@ UnicastLargeObjBus<
         'static + ConcurrentStream + Send,
     <Channel::Xfrm as DatagramXfrm>::PeerAddr:
         'static + Eq + Hash + Send + Sync,
-    F: 'static + OwnedFlowsCreate<
+    F: 'static
+        + OwnedFlowsCreate<
             Channel::Socket,
             Channel::Nego,
             SessionAuth,
             Channel::Xfrm
-        > + Send,
+        >
+        + Send,
     F::Flow: 'static + ConcurrentStream + Send,
     F::CreateParam: Clone + Default + Send + Sync,
     F::Reporter: Clone + Send + Sync,
     F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm: 'static +
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
+    Xfrm: 'static
+        + DatagramXfrm
+        + DatagramXfrmCreate<Addr = Channel::Param>
+        + Send
+        + Sync,
     Xfrm::CreateParam: Clone + Default + Send + Sync,
     Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
     Ctx: 'static
@@ -459,7 +513,8 @@ UnicastLargeObjBus<
         + Hash
         + Into<Option<IPEndpointAddr>>
         + Send
-        + Sync {
+        + Sync
+{
     pub fn create(
         config: UnicastLargeObjBusConfig<
             ChannelRegistryChannelsConfig<
@@ -480,7 +535,17 @@ UnicastLargeObjBus<
         mut ctx: Ctx,
         shutdown: ShutdownFlag,
         sender_notify: Notify,
-        proto: LargeObjProto<H::HashID, Msg, Wrapper, MsgAuth, WrapperCodec, IDs, Recv, OutboundFrags>
+        proto: LargeObjProto<
+            H::HashID,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            (),
+            WrapperCodec,
+            IDs,
+            Recv,
+            OutboundFrags
+        >
     ) -> Result<
         Self,
         UnicastLargeObjBusCreateError<
@@ -529,7 +594,9 @@ UnicastLargeObjBus<
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| UnicastLargeObjBusCreateError::Acquire { err: err })?;
+            .map_err(|err| UnicastLargeObjBusCreateError::Acquire {
+                err: err
+            })?;
 
         // Bring up the pull-side.
         debug!(target: "unicast-large-obj-bus",
@@ -538,9 +605,9 @@ UnicastLargeObjBus<
         let (party_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
-        let large_obj_codec_param = <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::Param::default();
-        let msg_codec = LargeObjMsgCodec::create(large_obj_codec_param)
-            .map_err(|err| UnicastLargeObjBusCreateError::MsgCodec { err: err })?;
+        let msg_codec = LargeObjMsgCodec::create(()).map_err(|err| {
+            UnicastLargeObjBusCreateError::MsgCodec { err: err }
+        })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
@@ -579,9 +646,9 @@ UnicastLargeObjBus<
 
         // Refresh the streams to ensure no bad stream
         // reporting.
-        stream
-            .refresh(&mut ctx)
-            .map_err(|err| UnicastLargeObjBusCreateError::Refresh { err: err })?;
+        stream.refresh(&mut ctx).map_err(|err| {
+            UnicastLargeObjBusCreateError::Refresh { err: err }
+        })?;
 
         let reporter = stream.reporter();
         let sender = PushStreamThread::create(
