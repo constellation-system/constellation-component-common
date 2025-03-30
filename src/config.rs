@@ -20,6 +20,7 @@ use constellation_channels::config::ResolverConfig;
 use constellation_streams::config::BatchSlotsConfig;
 use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::PartyConfig;
+use constellation_streams::config::PrivateLargeObjModeConfig;
 use constellation_streams::config::PrivateSmallObjModeConfig;
 use constellation_streams::config::SharedSmallObjModeConfig;
 use serde::Deserialize;
@@ -28,7 +29,7 @@ use serde::Serialize;
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "multicast-comm")]
 #[serde(rename_all = "kebab-case")]
-pub struct MulticastCommConfig<PartyID, Channels, Epochs, Endpoint>
+pub struct MulticastBusConfig<PartyID, Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default {
@@ -43,9 +44,9 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "unicast-comm")]
+#[serde(rename = "unicast-small-obj-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastCommConfig<Channels, Epochs, Endpoint>
+pub struct UnicastSmallObjBusConfig<Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default {
@@ -56,12 +57,26 @@ where
     mode: PrivateSmallObjModeConfig
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[serde(rename = "unicast-large-obj-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct UnicastLargeObjBusConfig<Channels, Epochs, Endpoint>
+where
+    Channels: Default,
+    Epochs: Default {
+    #[serde(flatten)]
+    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+    #[serde(flatten)]
+    #[serde(default)]
+    mode: PrivateLargeObjModeConfig,
+}
+
 #[derive(
     Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize,
 )]
 #[serde(rename = "dispatch-comm")]
 #[serde(rename_all = "kebab-case")]
-pub struct DispatchCommConfig<Epochs>
+pub struct DispatchBusConfig<Epochs>
 where
     Epochs: Default {
     #[serde(default)]
@@ -98,7 +113,7 @@ where
     }
 }
 
-impl<Epochs> DispatchCommConfig<Epochs>
+impl<Epochs> DispatchBusConfig<Epochs>
 where
     Epochs: Default
 {
@@ -107,8 +122,8 @@ where
         sessions_hint: Option<usize>,
         dispatch: DispatchConfig<Epochs>,
         mode: PrivateSmallObjModeConfig
-    ) -> DispatchCommConfig<Epochs> {
-        DispatchCommConfig {
+    ) -> DispatchBusConfig<Epochs> {
+        DispatchBusConfig {
             sessions_hint: sessions_hint,
             dispatch: dispatch,
             mode: mode
@@ -142,7 +157,8 @@ where
     }
 }
 
-impl<Channels, Epochs, Endpoint> UnicastCommConfig<Channels, Epochs, Endpoint>
+impl<Channels, Epochs, Endpoint>
+    UnicastSmallObjBusConfig<Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default
@@ -151,8 +167,8 @@ where
     pub fn create(
         party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
         mode: PrivateSmallObjModeConfig
-    ) -> UnicastCommConfig<Channels, Epochs, Endpoint> {
-        UnicastCommConfig {
+    ) -> UnicastSmallObjBusConfig<Channels, Epochs, Endpoint> {
+        UnicastSmallObjBusConfig {
             party: party,
             mode: mode
         }
@@ -181,8 +197,48 @@ where
     }
 }
 
+impl<Channels, Epochs, Endpoint>
+    UnicastLargeObjBusConfig<Channels, Epochs, Endpoint>
+where
+    Channels: Default,
+    Epochs: Default
+{
+    #[inline]
+    pub fn create(
+        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+        mode: PrivateLargeObjModeConfig
+    ) -> UnicastLargeObjBusConfig<Channels, Epochs, Endpoint> {
+        UnicastLargeObjBusConfig {
+            party: party,
+            mode: mode
+        }
+    }
+
+    #[inline]
+    pub fn party(
+        &self
+    ) -> &PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
+        &self.party
+    }
+
+    #[inline]
+    pub fn mode(&self) -> &PrivateLargeObjModeConfig {
+        &self.mode
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (
+        PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+        PrivateLargeObjModeConfig,
+    ) {
+        (self.party, self.mode)
+    }
+}
+
 impl<PartyID, Channels, Epochs, Endpoint>
-    MulticastCommConfig<PartyID, Channels, Epochs, Endpoint>
+    MulticastBusConfig<PartyID, Channels, Epochs, Endpoint>
 where
     Channels: Default,
     Epochs: Default
@@ -192,8 +248,8 @@ where
         slots: BatchSlotsConfig,
         parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
         mode: SharedSmallObjModeConfig
-    ) -> MulticastCommConfig<PartyID, Channels, Epochs, Endpoint> {
-        MulticastCommConfig {
+    ) -> MulticastBusConfig<PartyID, Channels, Epochs, Endpoint> {
+        MulticastBusConfig {
             slots: slots,
             parties: parties,
             mode: mode

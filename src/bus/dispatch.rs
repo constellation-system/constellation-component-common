@@ -68,7 +68,7 @@ use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
 use log::debug;
 use log::error;
 
-use crate::config::DispatchCommConfig;
+use crate::config::DispatchBusConfig;
 
 pub trait SessionDispatch<Msg, Msgs, Prin, Recv>
 where
@@ -82,7 +82,7 @@ where
     ) -> Result<(ShutdownFlag, Msgs, Notify, Recv), Self::SessionError>;
 }
 
-/// Type of errors that can occur when creating a [DispatchComm].
+/// Type of errors that can occur when creating a [DispatchBus].
 #[derive(Debug)]
 pub enum DispatchError<Session> {
     /// Error acquiring session.
@@ -97,9 +97,9 @@ pub enum DispatchError<Session> {
     }
 }
 
-/// Type of errors that can occur when creating a [DispatchComm].
+/// Type of errors that can occur when creating a [DispatchBus].
 #[derive(Debug)]
-pub enum DispatchCommCreateError<MsgCodec, Acquire> {
+pub enum DispatchBusCreateError<MsgCodec, Acquire> {
     /// Error while creating message codecs.
     MsgCodec {
         /// The error that occurred while creating message codecs.
@@ -111,11 +111,11 @@ pub enum DispatchCommCreateError<MsgCodec, Acquire> {
 }
 
 /// Cleanup object for [UnicastComm].
-pub struct DispatchCommCleanup {
+pub struct DispatchBusCleanup {
     pull_join: JoinHandle<()>
 }
 
-pub struct DispatchComm<
+pub struct DispatchBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -360,7 +360,7 @@ impl<
         Session,
         Ctx
     >
-    DispatchComm<
+    DispatchBus<
         Msg,
         MsgCodec,
         Msgs,
@@ -446,7 +446,7 @@ where
         + Sync
 {
     pub fn create(
-        config: DispatchCommConfig<Epochs::Config>,
+        config: DispatchBusConfig<Epochs::Config>,
         session: Session,
         listener: ThreadedFlowsListener<
             <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
@@ -461,7 +461,7 @@ where
         mut ctx: Ctx
     ) -> Result<
         Self,
-        DispatchCommCreateError<
+        DispatchBusCreateError<
             MsgCodec::CreateError,
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
@@ -485,7 +485,7 @@ where
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| DispatchCommCreateError::Acquire { err: err })?;
+            .map_err(|err| DispatchBusCreateError::Acquire { err: err })?;
 
         let dispatcher = Dispatcher {
             msg: PhantomData,
@@ -504,7 +504,7 @@ where
         };
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
-            .map_err(|err| DispatchCommCreateError::MsgCodec { err: err })?;
+            .map_err(|err| DispatchBusCreateError::MsgCodec { err: err })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let pull = match size_hint {
@@ -525,16 +525,16 @@ where
             )
         };
 
-        Ok(DispatchComm { pull: pull })
+        Ok(DispatchBus { pull: pull })
     }
 
-    /// Consume this `DispatchComm`, start the threads, and return a
+    /// Consume this `DispatchBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> DispatchCommCleanup {
-        let DispatchComm { pull } = self;
+    pub fn start(self) -> DispatchBusCleanup {
+        let DispatchBus { pull } = self;
         let pull_join = pull.start();
 
-        DispatchCommCleanup {
+        DispatchBusCleanup {
             pull_join: pull_join
         }
     }
@@ -723,16 +723,16 @@ where
     }
 }
 
-impl DispatchCommCleanup {
+impl DispatchBusCleanup {
     pub fn cleanup(self) {
-        debug!(target: "dispatch-comm-cleanup",
+        debug!(target: "dispatch-bus-cleanup",
                "joining pull streams");
 
         // XXX this won't stop the pull threads properly, but we need
         // the non-blocking I/O refactor to do that properly.
 
         if self.pull_join.join().is_err() {
-            error!(target: "dispatch-comm-cleanup",
+            error!(target: "dispatch-bus-cleanup",
                    "error joining pull streams listener")
         }
     }
@@ -753,7 +753,7 @@ where
     }
 }
 
-impl<MsgCodec, Acquire> Display for DispatchCommCreateError<MsgCodec, Acquire>
+impl<MsgCodec, Acquire> Display for DispatchBusCreateError<MsgCodec, Acquire>
 where
     MsgCodec: Display,
     Acquire: Display
@@ -763,8 +763,8 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            DispatchCommCreateError::MsgCodec { err } => err.fmt(f),
-            DispatchCommCreateError::Acquire { err } => err.fmt(f)
+            DispatchBusCreateError::MsgCodec { err } => err.fmt(f),
+            DispatchBusCreateError::Acquire { err } => err.fmt(f)
         }
     }
 }

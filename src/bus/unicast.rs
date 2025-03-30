@@ -16,14 +16,12 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-use std::convert::Infallible;
 use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
-use std::vec::IntoIter;
 
 use constellation_auth::authn::AuthNMsgRecv;
 use constellation_auth::authn::PassthruMsgAuthN;
@@ -59,15 +57,13 @@ use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
 use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::SharedMsgs;
+use constellation_common::net::PrivateMsgs;
 use constellation_common::net::Socket;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
-use constellation_streams::multicast::StreamMulticaster;
-use constellation_streams::multicast::StreamMulticasterReporter;
 use constellation_streams::select::StreamSelector;
 use constellation_streams::select::StreamSelectorCreateError;
 use constellation_streams::select::StreamSelectorReporter;
@@ -78,20 +74,18 @@ use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
 use constellation_streams::threads::pull::PullStreamsListenThread;
 use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::shared::SharedSmallObjPushMode;
+use constellation_streams::threads::push::private::PrivateSmallObjPushMode;
 use constellation_streams::threads::push::PushStreamThread;
 use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::MulticastCommConfig;
-use crate::config::PartiesConfig;
-use crate::PartyStreamIdx;
+use crate::config::UnicastSmallObjBusConfig;
 
 // ISSUE #2: Need to refactor authn so we can properly handle message
 // authentication.
 
-pub type CompoundMulticastComm<
+pub type CompoundUnicastSmallObjBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -100,7 +94,7 @@ pub type CompoundMulticastComm<
     SessionAuth,
     Xfrm,
     Ctx
-> = MulticastComm<
+> = UnicastSmallObjBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -120,7 +114,7 @@ pub type CompoundMulticastComm<
     Ctx
 >;
 
-pub struct MulticastComm<
+pub struct UnicastSmallObjBus<
     Msg,
     MsgCodec,
     Msgs,
@@ -135,7 +129,7 @@ pub struct MulticastComm<
     Ctx
 > where
     Msg: 'static + Clone + Send,
-    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
     SessionAuth: 'static + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
         + Send
@@ -199,109 +193,9 @@ pub struct MulticastComm<
         + Send
         + Sync {
     endpoint: PhantomData<Endpoint>,
-    push:
-        PushStreamThread<
-            Msgs,
-            StreamMulticaster<
-                SessionAuth::Prin,
-                PartyStreamIdx,
-                Msg,
-                StreamSelector<
-                    Epochs,
-                    FarChannelRegistryChannels<
-                        Msg,
-                        MsgCodec,
-                        PullStreamsReporter<
-                            Msg,
-                            Msg,
-                            ThreadedFlowsPullStreamListener<
-                                <Channel::Nego as OwnedFlowNegotiator<
-                                    F::Flow
-                                >>::Flow,
-                                Msg,
-                                MsgCodec,
-                                StreamID<
-                                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                                    F::ChannelID,
-                                    Channel::Param
-                                >,
-                                SessionAuth::Prin
-                            >,
-                            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                            Recv
-                        >,
-                        Channel,
-                        F,
-                        SessionAuth,
-                        Xfrm
-                    >,
-                    Resolver,
-                    Ctx
-                >,
-                Ctx
-            >,
-            SharedSmallObjPushMode<
-                Msg,
-                StreamMulticaster<
-                        SessionAuth::Prin,
-                    PartyStreamIdx,
-                    Msg,
-                    StreamSelector<
-                            Epochs,
-                        FarChannelRegistryChannels<
-                                Msg,
-                            MsgCodec,
-                            PullStreamsReporter<
-                                    Msg,
-                                Msg,
-                                ThreadedFlowsPullStreamListener<
-                                        <Channel::Nego as OwnedFlowNegotiator<
-                                                F::Flow
-                                                >>::Flow,
-                                    Msg,
-                                    MsgCodec,
-                                    StreamID<
-                                            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                                        F::ChannelID,
-                                        Channel::Param
-                                            >,
-                                    SessionAuth::Prin
-                                        >,
-                                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                                Recv
-                                    >,
-                            Channel,
-                            F,
-                            SessionAuth,
-                            Xfrm
-                                >,
-                        Resolver,
-                        Ctx
-                            >,
-                    Ctx
-                        >,
-                Ctx
-            >,
-            Ctx
-        >,
-    pull: PullStreamsListenThread<
-        Msg,
-        Msg,
-        ThreadedFlowsPullStreamListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
-        >
-    >,
-    reporter: StreamMulticasterReporter<
-        PartyStreamIdx,
-        StreamSelectorReporter<
+    push: PushStreamThread<
+        Msgs,
+        StreamSelector<
             Epochs,
             FarChannelRegistryChannels<
                 Msg,
@@ -330,20 +224,100 @@ pub struct MulticastComm<
             >,
             Resolver,
             Ctx
+        >,
+        PrivateSmallObjPushMode<
+            Msg,
+            StreamSelector<
+                Epochs,
+                FarChannelRegistryChannels<
+                    Msg,
+                    MsgCodec,
+                    PullStreamsReporter<
+                        Msg,
+                        Msg,
+                        ThreadedFlowsPullStreamListener<
+                            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                            Msg,
+                            MsgCodec,
+                            StreamID<
+                                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                                F::ChannelID,
+                                Channel::Param
+                            >,
+                            SessionAuth::Prin
+                        >,
+                        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                        Recv
+                    >,
+                    Channel,
+                    F,
+                    SessionAuth,
+                    Xfrm
+                >,
+                Resolver,
+                Ctx
+            >,
+            Ctx
+        >,
+        Ctx
+    >,
+    pull: PullStreamsListenThread<
+        Msg,
+        Msg,
+        ThreadedFlowsPullStreamListener<
+            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+            Msg,
+            MsgCodec,
+            StreamID<
+                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                F::ChannelID,
+                Channel::Param
+            >,
+            SessionAuth::Prin
         >
+    >,
+    reporter: StreamSelectorReporter<
+        Epochs,
+        FarChannelRegistryChannels<
+            Msg,
+            MsgCodec,
+            PullStreamsReporter<
+                Msg,
+                Msg,
+                ThreadedFlowsPullStreamListener<
+                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
+                    Msg,
+                    MsgCodec,
+                    StreamID<
+                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
+                        F::ChannelID,
+                        Channel::Param
+                    >,
+                    SessionAuth::Prin
+                >,
+                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
+                Recv
+            >,
+            Channel,
+            F,
+            SessionAuth,
+            Xfrm
+        >,
+        Resolver,
+        Ctx
     >
 }
 
-/// Cleanup object for [MulticastComm].
-pub struct MulticastCommCleanup {
+/// Cleanup object for [UnicastSmallObjBus].
+pub struct UnicastSmallObjBusCleanup {
     notify: Notify,
     sender_join: JoinHandle<()>,
     pull_join: JoinHandle<()>
 }
 
-/// Type of errors that can occur when creating a [MulticastComm].
+/// Type of errors that can occur when creating a [UnicastSmallObjBus].
 #[derive(Debug)]
-pub enum MulticastCommRunError<Acquire, MsgCodec, Stream, Refresh> {
+pub enum UnicastSmallObjBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
     /// Error acquiring channels.
     Acquire {
         /// The error that occurred while acquiring the channels.
@@ -378,7 +352,7 @@ impl<
         Endpoint,
         Ctx
     >
-    MulticastComm<
+    UnicastSmallObjBus<
         Msg,
         MsgCodec,
         Msgs,
@@ -394,7 +368,7 @@ impl<
     >
 where
     Msg: 'static + Clone + Send,
-    Msgs: 'static + SharedMsgs<PartyStreamIdx, Msg> + Send,
+    Msgs: 'static + PrivateMsgs<Msg> + Send,
     SessionAuth: 'static
         + Clone
         + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
@@ -466,9 +440,7 @@ where
         + Sync
 {
     pub fn create(
-        self_party: SessionAuth::Prin,
-        config: MulticastCommConfig<
-            SessionAuth::Prin,
+        config: UnicastSmallObjBusConfig<
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
             Epochs::Config,
             Endpoint
@@ -489,7 +461,7 @@ where
         msgs: Msgs
     ) -> Result<
         Self,
-        MulticastCommRunError<
+        UnicastSmallObjBusCreateError<
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
                     Channel::AcquireError,
@@ -524,26 +496,26 @@ where
             >
         >
     >{
-        info!(target: "multicast-comm",
-              "creating multicast comm");
+        info!(target: "unicast-small-obj-bus",
+              "creating unicast comm");
 
-        debug!(target: "multicast-comm",
+        debug!(target: "unicast-small-obj-bus",
                "initializing channels");
 
         // Bring up all channels.
         ctx.far_channel_registry()
             .acquire_all(&mut ctx)
-            .map_err(|err| MulticastCommRunError::Acquire { err: err })?;
+            .map_err(|err| UnicastSmallObjBusCreateError::Acquire { err: err })?;
 
         // Bring up the pull-side.
-        debug!(target: "multicast-comm",
+        debug!(target: "unicast-small-obj-bus",
                "initializing pull streams");
 
-        let (slots_config, parties_config, mode_config) = config.take();
+        let (party_config, mode_config) = config.take();
 
         // ISSUE #1: get the codec config properly
         let msg_codec = MsgCodec::create(MsgCodec::Param::default())
-            .map_err(|err| MulticastCommRunError::MsgCodec { err: err })?;
+            .map_err(|err| UnicastSmallObjBusCreateError::MsgCodec { err: err })?;
         let listener =
             ThreadedFlowsPullStreamListener::create(listener, msg_codec);
         let (pull_streams, pull_listener) = PullStreams::with_capacity(
@@ -554,84 +526,37 @@ where
             1
         );
         let stream_reporter = pull_streams.reporter();
+
         // Bring up the push-side.
-        debug!(target: "multicast-comm",
+        debug!(target: "unicast-small-obj-bus",
                "initializing push streams");
 
-        let stream = match parties_config {
-            PartiesConfig::Static { stat } => {
-                let mut party_streams = Vec::with_capacity(stat.len());
+        let mut stream = StreamSelector::<
+            Epochs,
+            FarChannelRegistryChannels<
+                Msg,
+                MsgCodec,
+                PullStreamsReporter<Msg, _, _, _, _>,
+                Channel,
+                F,
+                SessionAuth,
+                Xfrm
+            >,
+            Resolver,
+            Ctx
+        >::create(
+            &mut ctx,
+            shutdown.clone(),
+            stream_reporter.clone(),
+            party_config
+        )
+        .map_err(|err| UnicastSmallObjBusCreateError::Stream { err: err })?;
 
-                for party in stat {
-                    let (party, party_config) = party.take();
-
-                    debug!(target: "multicast-comm",
-                           "creating stream for party {}",
-                           self_party);
-
-                    if party != self_party {
-                        let mut stream = StreamSelector::<
-                            Epochs,
-                            FarChannelRegistryChannels<
-                                Msg,
-                                MsgCodec,
-                                PullStreamsReporter<Msg, _, _, _, _>,
-                                Channel,
-                                F,
-                                SessionAuth,
-                                Xfrm
-                            >,
-                            Resolver,
-                            Ctx
-                        >::create(
-                            &mut ctx,
-                            shutdown.clone(),
-                            stream_reporter.clone(),
-                            party_config
-                        )
-                        .map_err(|err| MulticastCommRunError::Stream {
-                            err: err
-                        })?;
-                        // Refresh the streams to ensure no bad stream
-                        // reporting.
-                        stream.refresh(&mut ctx).map_err(|err| {
-                            MulticastCommRunError::Refresh { err: err }
-                        })?;
-                        party_streams.push((party, stream))
-                    } else {
-                        debug!(target: "multicast-comm",
-                               "skipping self-party {}",
-                               self_party)
-                    }
-                }
-
-                let stream: StreamMulticaster<
-                    SessionAuth::Prin,
-                    PartyStreamIdx,
-                    Msg,
-                    StreamSelector<
-                        Epochs,
-                        FarChannelRegistryChannels<
-                            Msg,
-                            MsgCodec,
-                            PullStreamsReporter<Msg, _, _, _, _>,
-                            Channel,
-                            F,
-                            SessionAuth,
-                            Xfrm
-                        >,
-                        Resolver,
-                        Ctx
-                    >,
-                    Ctx
-                > = StreamMulticaster::create(
-                    party_streams.into_iter(),
-                    slots_config
-                );
-
-                stream
-            }
-        };
+        // Refresh the streams to ensure no bad stream
+        // reporting.
+        stream
+            .refresh(&mut ctx)
+            .map_err(|err| UnicastSmallObjBusCreateError::Refresh { err: err })?;
 
         let reporter = stream.reporter();
         let sender = PushStreamThread::create(
@@ -643,7 +568,7 @@ where
             shutdown.clone()
         );
 
-        Ok(MulticastComm {
+        Ok(UnicastSmallObjBus {
             endpoint: PhantomData,
             reporter: reporter,
             pull: pull_listener,
@@ -652,21 +577,14 @@ where
     }
 
     #[inline]
-    pub fn parties(
-        &self
-    ) -> Result<IntoIter<(PartyStreamIdx, SessionAuth::Prin)>, Infallible> {
-        self.push.parties()
-    }
-
-    #[inline]
     pub fn notify(&self) -> Notify {
         self.push.notify()
     }
 
-    /// Consume this `MulticastComm`, start the threads, and return a
+    /// Consume this `UnicastSmallObjBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> MulticastCommCleanup {
-        let MulticastComm {
+    pub fn start(self) -> UnicastSmallObjBusCleanup {
+        let UnicastSmallObjBus {
             pull,
             push,
             reporter,
@@ -676,7 +594,7 @@ where
         let notify = push.notify();
         let sender_join = push.start();
 
-        MulticastCommCleanup {
+        UnicastSmallObjBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
@@ -684,37 +602,34 @@ where
     }
 }
 
-impl MulticastCommCleanup {
+impl UnicastSmallObjBusCleanup {
     pub fn cleanup(self) {
         if let Err(err) = self.notify.notify() {
-            error!(target: "multicast-comm-cleanup",
+            error!(target: "unicast-small-obj-bus-cleanup",
                    "error notifying sender: {}",
                    err)
         }
 
-        debug!(target: "multicast-comm-cleanup",
+        debug!(target: "unicast-small-obj-bus-cleanup",
                "joining sender");
 
         if self.sender_join.join().is_err() {
-            error!(target: "multicast-comm-cleanup",
+            error!(target: "unicast-small-obj-bus-cleanup",
                    "error joining sender")
         }
 
-        debug!(target: "multicast-comm-cleanup",
+        debug!(target: "unicast-small-obj-bus-cleanup",
                "joining pull streams");
 
         if self.pull_join.join().is_err() {
-            error!(target: "multicast-comm-cleanup",
+            error!(target: "unicast-small-obj-bus-cleanup",
                    "error joining pull streams listener")
         }
-
-        debug!(target: "multicast-comm-cleanup",
-               "joining state thread");
     }
 }
 
 impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for MulticastCommRunError<Acquire, MsgCodec, Stream, Refresh>
+    for UnicastSmallObjBusCreateError<Acquire, MsgCodec, Stream, Refresh>
 where
     Acquire: Display,
     MsgCodec: Display,
@@ -726,10 +641,10 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
-            MulticastCommRunError::Acquire { err } => err.fmt(f),
-            MulticastCommRunError::MsgCodec { err } => err.fmt(f),
-            MulticastCommRunError::Stream { err } => err.fmt(f),
-            MulticastCommRunError::Refresh { err } => err.fmt(f)
+            UnicastSmallObjBusCreateError::Acquire { err } => err.fmt(f),
+            UnicastSmallObjBusCreateError::MsgCodec { err } => err.fmt(f),
+            UnicastSmallObjBusCreateError::Stream { err } => err.fmt(f),
+            UnicastSmallObjBusCreateError::Refresh { err } => err.fmt(f)
         }
     }
 }
