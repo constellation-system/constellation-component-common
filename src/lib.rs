@@ -23,6 +23,7 @@
 
 pub mod bus;
 pub mod config;
+pub mod xact;
 
 #[allow(clippy::all)]
 #[rustfmt::skip]

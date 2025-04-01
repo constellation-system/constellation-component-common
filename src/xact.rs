@@ -16,4 +16,21 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-pub mod xact;
+use constellation_common::codec::per::PERCodec;
+use constellation_common::codec::DatagramCodec;
+use constellation_common::hashid::HashAlgo;
+use constellation_common::hashid::HashID;
+
+use crate::generated::xact::XactBatchHeader;
+use crate::generated::xact::XactReqHeader;
+
+pub struct XactReq<H>
+where H: HashID {
+    hashid: H,
+    data: Vec<u8>
+}
+
+pub struct XactBatch<H>
+where H: HashID {
+    reqs: Vec<XactReq<H>>
+}
