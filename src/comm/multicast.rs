@@ -53,6 +53,7 @@ use constellation_channels::far::FarChannelFlowsError;
 use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_channels::resolve::MixedResolver;
+use constellation_common::codec::Codec;
 use constellation_common::codec::DatagramCodec;
 use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
@@ -140,7 +141,7 @@ pub struct MulticastComm<
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as DatagramCodec<Msg>>::Param: Default,
+    <MsgCodec as Codec<Msg>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -359,7 +360,7 @@ where
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as DatagramCodec<Msg>>::Param: Default,
+    <MsgCodec as Codec<Msg>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
