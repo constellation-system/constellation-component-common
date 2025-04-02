@@ -52,6 +52,7 @@ use constellation_channels::far::FarChannelFlowsError;
 use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_channels::resolve::MixedResolver;
+use constellation_common::codec::Codec;
 use constellation_common::codec::DatagramCodec;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::ids::IDGen;
@@ -155,7 +156,7 @@ pub struct UnicastLargeObjBus<
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -452,7 +453,7 @@ where
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send + Sync,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
@@ -518,7 +519,7 @@ where
     pub fn create(
         config: UnicastLargeObjBusConfig<
             ChannelRegistryChannelsConfig<
-                <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::Param
+                <LargeObjMsgCodec<H> as Codec<LargeObjMsg<H::HashID>>>::Param
             >,
             Epochs::Config,
             Endpoint
@@ -561,10 +562,10 @@ where
                     <Channel::Acquired as FarChannelAcquired>::WrapError
                 >
             >,
-            <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::CreateError,
+            <LargeObjMsgCodec<H> as Codec<LargeObjMsg<H::HashID>>>::CreateError,
             StreamSelectorCreateError<
                 FarChannelRegistryChannelsCreateError<
-                    <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::CreateError
+                    <LargeObjMsgCodec<H> as Codec<LargeObjMsg<H::HashID>>>::CreateError
                 >,
                 Resolver::CreateError
             >,

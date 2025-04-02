@@ -41,6 +41,7 @@ use constellation_channels::far::FarChannelCreate;
 use constellation_channels::far::FarChannelFlowsError;
 use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
+use constellation_common::codec::Codec;
 use constellation_common::codec::DatagramCodec;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::ids::IDGen;
@@ -156,7 +157,7 @@ pub struct DispatchLargeObjBus<
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone + Send,
@@ -351,7 +352,7 @@ struct Dispatcher<
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
@@ -497,7 +498,7 @@ where
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone + Send,
@@ -600,7 +601,7 @@ where
     ) -> Result<
         Self,
         DispatchLargeObjBusCreateError<
-            <LargeObjMsgCodec<H> as DatagramCodec<LargeObjMsg<H::HashID>>>::CreateError,
+            <LargeObjMsgCodec<H> as Codec<LargeObjMsg<H::HashID>>>::CreateError,
             FarChannelRegistryAcquireError<
                 RegistryAcquireError<
                     Channel::AcquireError,
@@ -753,7 +754,7 @@ where
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
-    <WrapperCodec as DatagramCodec<Wrapper>>::Param: Default,
+    <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone,
