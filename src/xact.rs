@@ -44,12 +44,14 @@ pub type XactReqHeaderPERCodec =
 pub type XactBatchHeaderPERCodec =
     PERCodec<XactBatchHeader, XACT_BATCH_HEADER_BITS>;
 
+#[derive(Clone)]
 pub struct XactReq<H>
 where H: HashID {
     hash: H,
     data: Vec<u8>
 }
 
+#[derive(Clone)]
 pub struct XactBatch<H>
 where H: HashID {
     seqnum: u64,

@@ -53,7 +53,6 @@ use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_channels::resolve::MixedResolver;
 use constellation_common::codec::Codec;
-use constellation_common::codec::DatagramCodec;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
@@ -155,7 +154,7 @@ pub struct UnicastLargeObjBus<
         + Send
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
+    WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
@@ -452,7 +451,7 @@ where
         + Send
         + Sync,
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send + Sync,
-    WrapperCodec: 'static + Clone + DatagramCodec<Wrapper> + Send,
+    WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
