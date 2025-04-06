@@ -46,14 +46,16 @@ pub type XactBatchHeaderPERCodec =
 
 #[derive(Clone, Debug)]
 pub struct XactReq<H>
-where H: HashID {
+where
+    H: HashID {
     hash: H,
     data: Vec<u8>
 }
 
 #[derive(Clone, Debug)]
 pub struct XactBatch<H>
-where H: HashID {
+where
+    H: HashID {
     seqnum: u64,
     reqs: Vec<XactReq<H>>
 }
@@ -62,8 +64,7 @@ where H: HashID {
 pub struct XactBatchCodec<H>
 where
     H: HashAlgo,
-    H::HashID: Clone
-{
+    H::HashID: Clone {
     req: XactReqHeaderPERCodec,
     batch: XactBatchHeaderPERCodec,
     hash: H
@@ -95,16 +96,17 @@ pub enum XactBatchDecodeError {
 }
 
 impl<ID> XactBatch<ID>
-where ID: HashID
+where
+    ID: HashID
 {
     pub fn create<H, I>(
         algo: &H,
         seqnum: u64,
         reqs: I
     ) -> Self
-    where H: HashAlgo<HashID = ID>,
-          I: Iterator<Item = Vec<u8>>
-    {
+    where
+        H: HashAlgo<HashID = ID>,
+        I: Iterator<Item = Vec<u8>> {
         let reqs = reqs
             .map(|data| {
                 let hash = algo.hash_bytes(&data);
@@ -123,9 +125,7 @@ where ID: HashID
     }
 
     #[inline]
-    fn buf_size(
-        &self
-    ) -> usize {
+    fn buf_size(&self) -> usize {
         let datasize: usize = self.reqs.iter().map(|req| req.data.len()).sum();
         let reqsize = self.reqs.len() * XACT_REQ_HEADER_SIZE;
 
@@ -166,13 +166,13 @@ where
         buf: &mut [u8]
     ) -> Result<usize, Self::EncodeError> {
         let metadata = XactBatchHeader {
-            seqnum: val.seqnum.clone().into(),
+            seqnum: val.seqnum,
             nreqs: val.reqs.len() as u32
         };
-        let mut curr =
-            self.batch.encode(&metadata, buf).map_err(|err| {
-                XactBatchEncodeError::Batch { err: err }
-            })?;
+        let mut curr = self
+            .batch
+            .encode(&metadata, buf)
+            .map_err(|err| XactBatchEncodeError::Batch { err: err })?;
 
         for req in val.reqs.iter() {
             let datalen = req.data.len();
@@ -184,9 +184,7 @@ where
             curr += self
                 .req
                 .encode(&header, &mut buf[curr..])
-                .map_err(|err| XactBatchEncodeError::Req {
-                    err: err
-                })?;
+                .map_err(|err| XactBatchEncodeError::Req { err: err })?;
 
             curr += if curr + datalen <= buf.len() {
                 buf[curr..curr + datalen].copy_from_slice(&req.data);
@@ -215,9 +213,7 @@ where
             let (req, nbytes) = self
                 .req
                 .decode(&buf[curr..])
-                .map_err(|err| XactBatchDecodeError::Req {
-                    err: err
-                })?;
+                .map_err(|err| XactBatchDecodeError::Req { err: err })?;
 
             curr += nbytes;
 

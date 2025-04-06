@@ -43,11 +43,11 @@ use constellation_channels::far::FarChannelOwnedFlows;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_common::codec::Codec;
 use constellation_common::hashid::HashAlgo;
+use constellation_common::hashid::HashID;
 use constellation_common::ids::IDGen;
 use constellation_common::net::DatagramXfrm;
 use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::PrivateMsgs;
 use constellation_common::net::Socket;
 use constellation_common::sched::RefreshError;
 use constellation_common::shutdown::ShutdownFlag;
@@ -60,8 +60,8 @@ use constellation_streams::config::DispatchConfig;
 use constellation_streams::frags::OutboundFrags;
 use constellation_streams::large_obj::LargeObjID;
 use constellation_streams::large_obj::LargeObjMsg;
-use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjMsgCodec;
+use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::select::dispatch::DispatchSelector;
 use constellation_streams::stream::ConcurrentStream;
@@ -77,16 +77,50 @@ use log::error;
 
 use crate::config::DispatchLargeObjBusConfig;
 
-pub trait SessionDispatch<Msg, Msgs, Prin, Recv>
-where
-    Msgs: PrivateMsgs<Msg> + Send,
-    Recv: AuthNMsgRecv<Prin, Msg> {
+pub trait SessionDispatch<
+    H,
+    Msg,
+    Wrapper,
+    MsgAuth,
+    WrapperCodec,
+    IDs,
+    Msgs,
+    Recv,
+    Prin
+> where
+    Msgs: LargeObjMsgs<H, Wrapper>,
+    Recv: AuthNMsgRecv<MsgAuth::Prin, Msg>,
+    IDs: IDGen + Iterator<Item = LargeObjID>,
+    IDs::Item: Clone + Default + Display + Eq + Hash + Into<u64>,
+    MsgAuth: MsgAuthN<Msg, Wrapper>,
+    WrapperCodec: Clone + Codec<Wrapper>,
+    WrapperCodec::Param: Default,
+    H: Clone + HashAlgo,
+    H::HashID: Clone + Display + Hash + HashID + Eq {
     type SessionError: Display;
 
     fn session(
         &self,
         prin: Prin
-    ) -> Result<(ShutdownFlag, Msgs, Notify, Recv), Self::SessionError>;
+    ) -> Result<
+        (
+            ShutdownFlag,
+            Notify,
+            LargeObjProto<
+                H,
+                Msg,
+                Wrapper,
+                MsgAuth,
+                (),
+                WrapperCodec,
+                IDs,
+                Msgs,
+                Recv,
+                OutboundFrags
+            >
+        ),
+        Self::SessionError
+    >;
 }
 
 /// Type of errors that can occur when creating a [DispatchLargeObjBus].
@@ -206,32 +240,15 @@ pub struct DispatchLargeObjBus<
     Endpoint: Send,
     Session: 'static
         + SessionDispatch<
-            LargeObjMsg<H::HashID>,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >,
-            SessionAuth::Prin,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >
+            H,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            WrapperCodec,
+            IDs,
+            Msgs,
+            Recv,
+            SessionAuth::Prin
         >
         + Send,
     Ctx: 'static
@@ -405,32 +422,15 @@ struct Dispatcher<
         Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
     Endpoint: Send,
     Session: SessionDispatch<
-            LargeObjMsg<H::HashID>,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >,
-            SessionAuth::Prin,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >
+            H,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            WrapperCodec,
+            IDs,
+            Msgs,
+            Recv,
+            SessionAuth::Prin
         > + Send,
     Ctx: FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
         + NSNameCachesCtx
@@ -565,32 +565,15 @@ where
     Endpoint: 'static + Send,
     Session: 'static
         + SessionDispatch<
-            LargeObjMsg<H::HashID>,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >,
-            SessionAuth::Prin,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >
+            H,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            WrapperCodec,
+            IDs,
+            Msgs,
+            Recv,
+            SessionAuth::Prin
         >
         + Send,
     Ctx: 'static
@@ -821,32 +804,15 @@ where
     Endpoint: Send,
     Session: 'static
         + SessionDispatch<
-            LargeObjMsg<H::HashID>,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >,
-            SessionAuth::Prin,
-            LargeObjProto<
-                H,
-                Msg,
-                Wrapper,
-                MsgAuth,
-                (),
-                WrapperCodec,
-                IDs,
-                Msgs,
-                Recv,
-                OutboundFrags
-            >
+            H,
+            Msg,
+            Wrapper,
+            MsgAuth,
+            WrapperCodec,
+            IDs,
+            Msgs,
+            Recv,
+            SessionAuth::Prin
         >
         + Send,
     Ctx: 'static
@@ -951,17 +917,20 @@ where
         ),
         Self::DispatchError
     > {
-        let (shutdown, msgs, notify, recv) = self
+        let (shutdown, notify, proto) = self
             .session
             .session(prin)
             .map_err(|err| DispatchError::Session { err: err })?;
-        let dispatched =
-            Dispatched::new(shutdown, PassthruMsgAuthN::default(), recv);
+        let dispatched = Dispatched::new(
+            shutdown,
+            PassthruMsgAuthN::default(),
+            proto.clone()
+        );
         let reporter = dispatched.reporter();
         let stream = DispatchSelector::create(reporter, self.config.clone())
             .map_err(|err| DispatchError::Stream { err: err })?;
 
-        Ok((stream, msgs, notify, dispatched))
+        Ok((stream, proto, notify, dispatched))
     }
 }
 
