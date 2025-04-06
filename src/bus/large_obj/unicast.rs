@@ -67,6 +67,7 @@ use constellation_streams::channels::ChannelParam;
 use constellation_streams::frags::OutboundFrags;
 use constellation_streams::large_obj::LargeObjID;
 use constellation_streams::large_obj::LargeObjMsg;
+use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjMsgCodec;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::select::StreamSelector;
@@ -97,6 +98,7 @@ pub type CompoundUnicastLargeObjBus<
     H,
     IDs,
     MsgAuth,
+    Msgs,
     Recv,
     Epochs,
     SessionAuth,
@@ -109,6 +111,7 @@ pub type CompoundUnicastLargeObjBus<
     H,
     IDs,
     MsgAuth,
+    Msgs,
     Recv,
     Epochs,
     CompoundFarChannel,
@@ -132,6 +135,7 @@ pub struct UnicastLargeObjBus<
     H,
     IDs,
     MsgAuth,
+    Msgs,
     Recv,
     Epochs,
     Channel,
@@ -156,6 +160,7 @@ pub struct UnicastLargeObjBus<
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -214,13 +219,14 @@ pub struct UnicastLargeObjBus<
     endpoint: PhantomData<Endpoint>,
     push: PushStreamThread<
         LargeObjProto<
-            H::HashID,
+            H,
             Msg,
             Wrapper,
             MsgAuth,
             (),
             WrapperCodec,
             IDs,
+            Msgs,
             Recv,
             OutboundFrags
         >,
@@ -245,13 +251,14 @@ pub struct UnicastLargeObjBus<
                     >,
                     PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
                     LargeObjProto<
-                        H::HashID,
+                        H,
                         Msg,
                         Wrapper,
                         MsgAuth,
                         (),
                         WrapperCodec,
                         IDs,
+                        Msgs,
                         Recv,
                         OutboundFrags
                     >
@@ -290,13 +297,14 @@ pub struct UnicastLargeObjBus<
                             SessionAuth::Prin
                         >,
                         LargeObjProto<
-                            H::HashID,
+                            H,
                             Msg,
                             Wrapper,
                             MsgAuth,
                             (),
                             WrapperCodec,
                             IDs,
+                            Msgs,
                             Recv,
                             OutboundFrags
                         >
@@ -349,13 +357,14 @@ pub struct UnicastLargeObjBus<
                 >,
                 PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
                 LargeObjProto<
-                    H::HashID,
+                    H,
                     Msg,
                     Wrapper,
                     MsgAuth,
                     (),
                     WrapperCodec,
                     IDs,
+                    Msgs,
                     Recv,
                     OutboundFrags
                 >
@@ -407,6 +416,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -424,6 +434,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -453,6 +464,7 @@ where
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send + Sync,
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
@@ -536,13 +548,14 @@ where
         shutdown: ShutdownFlag,
         sender_notify: Notify,
         proto: LargeObjProto<
-            H::HashID,
+            H,
             Msg,
             Wrapper,
             MsgAuth,
             (),
             WrapperCodec,
             IDs,
+            Msgs,
             Recv,
             OutboundFrags
         >

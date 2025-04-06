@@ -60,6 +60,7 @@ use constellation_streams::config::DispatchConfig;
 use constellation_streams::frags::OutboundFrags;
 use constellation_streams::large_obj::LargeObjID;
 use constellation_streams::large_obj::LargeObjMsg;
+use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjMsgCodec;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::select::dispatch::DispatchSelector;
@@ -128,6 +129,7 @@ pub struct DispatchLargeObjBus<
     H,
     IDs,
     MsgAuth,
+    Msgs,
     Recv,
     Epochs,
     Channel,
@@ -157,6 +159,7 @@ pub struct DispatchLargeObjBus<
     SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone + Send,
@@ -205,25 +208,27 @@ pub struct DispatchLargeObjBus<
         + SessionDispatch<
             LargeObjMsg<H::HashID>,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >,
             SessionAuth::Prin,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >
@@ -245,6 +250,7 @@ pub struct DispatchLargeObjBus<
             H,
             IDs,
             MsgAuth,
+            Msgs,
             Recv,
             Epochs,
             Channel,
@@ -297,13 +303,14 @@ pub struct DispatchLargeObjBus<
                     >,
                     PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
                     LargeObjProto<
-                        H::HashID,
+                        H,
                         Msg,
                         Wrapper,
                         MsgAuth,
                         (),
                         WrapperCodec,
                         IDs,
+                        Msgs,
                         Recv,
                         OutboundFrags
                     >
@@ -323,6 +330,7 @@ struct Dispatcher<
     H,
     IDs,
     MsgAuth,
+    Msgs,
     Recv,
     Epochs,
     Channel,
@@ -353,6 +361,7 @@ struct Dispatcher<
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Channel: 'static
         + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
@@ -398,25 +407,27 @@ struct Dispatcher<
     Session: SessionDispatch<
             LargeObjMsg<H::HashID>,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >,
             SessionAuth::Prin,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >
@@ -431,6 +442,7 @@ struct Dispatcher<
     hash: PhantomData<H>,
     msg_auth: PhantomData<MsgAuth>,
     codec: PhantomData<WrapperCodec>,
+    msgs: PhantomData<Msgs>,
     recv: PhantomData<Recv>,
     channel: PhantomData<Channel>,
     flows: PhantomData<F>,
@@ -450,6 +462,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -468,6 +481,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -499,6 +513,7 @@ where
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone + Send,
     Channel: 'static
@@ -552,25 +567,27 @@ where
         + SessionDispatch<
             LargeObjMsg<H::HashID>,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >,
             SessionAuth::Prin,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >
@@ -633,6 +650,7 @@ where
             hash: PhantomData,
             codec: PhantomData,
             wrapper: PhantomData,
+            msgs: PhantomData,
             recv: PhantomData,
             channel: PhantomData,
             flows: PhantomData,
@@ -691,6 +709,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -724,6 +743,7 @@ impl<
         H,
         IDs,
         MsgAuth,
+        Msgs,
         Recv,
         Epochs,
         Channel,
@@ -755,6 +775,7 @@ where
     WrapperCodec: 'static + Clone + Codec<Wrapper> + Send,
     <WrapperCodec as Codec<Wrapper>>::Param: Default,
     Recv: 'static + AuthNMsgRecv<MsgAuth::Prin, Msg> + Clone + Send,
+    Msgs: 'static + Clone + LargeObjMsgs<H, Wrapper> + Send,
     Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
     Epochs::Config: Clone,
     Channel: 'static
@@ -802,25 +823,27 @@ where
         + SessionDispatch<
             LargeObjMsg<H::HashID>,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >,
             SessionAuth::Prin,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >
@@ -834,13 +857,14 @@ where
 {
     type DispatchError = DispatchError<Session::SessionError>;
     type Msgs = LargeObjProto<
-        H::HashID,
+        H,
         Msg,
         Wrapper,
         MsgAuth,
         (),
         WrapperCodec,
         IDs,
+        Msgs,
         Recv,
         OutboundFrags
     >;
@@ -872,13 +896,14 @@ where
             >,
             PassthruMsgAuthN<LargeObjMsg<H::HashID>, SessionAuth::Prin>,
             LargeObjProto<
-                H::HashID,
+                H,
                 Msg,
                 Wrapper,
                 MsgAuth,
                 (),
                 WrapperCodec,
                 IDs,
+                Msgs,
                 Recv,
                 OutboundFrags
             >
@@ -886,13 +911,14 @@ where
         Ctx
     >;
     type Recv = LargeObjProto<
-        H::HashID,
+        H,
         Msg,
         Wrapper,
         MsgAuth,
         (),
         WrapperCodec,
         IDs,
+        Msgs,
         Recv,
         OutboundFrags
     >;
