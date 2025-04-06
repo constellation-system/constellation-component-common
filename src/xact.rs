@@ -98,8 +98,8 @@ impl<ID> XactBatch<ID>
 where ID: HashID
 {
     pub fn create<H, I>(
+        algo: &H,
         seqnum: u64,
-        algo: H,
         reqs: I
     ) -> Self
     where H: HashAlgo<HashID = ID>,
