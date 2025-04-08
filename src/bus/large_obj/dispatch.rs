@@ -291,7 +291,7 @@ pub struct DispatchLargeObjBus<
             SessionAuth::Prin
         >,
         PrivateLargeObjPushMode<
-            H::HashID,
+            H,
             DispatchSelector<
                 Epochs,
                 StreamID<

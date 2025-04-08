@@ -272,7 +272,7 @@ pub struct UnicastLargeObjBus<
             Ctx
         >,
         PrivateLargeObjPushMode<
-            H::HashID,
+            H,
             StreamSelector<
                 Epochs,
                 FarChannelRegistryChannels<

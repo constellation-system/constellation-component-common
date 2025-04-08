@@ -294,7 +294,7 @@ pub struct MulticastLargeObjBus<
                 Ctx
             >,
             SharedLargeObjPushMode<
-                H::HashID,
+                H,
                 StreamMulticaster<
                     SessionAuth::Prin,
                     PartyStreamIdx,

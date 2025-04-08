@@ -35,11 +35,10 @@ use crate::generated::xact::XactReqHeader;
 const XACT_BATCH_HEADER_SIZE: usize = 11;
 const XACT_BATCH_HEADER_BITS: usize = XACT_BATCH_HEADER_SIZE * 8;
 
-const XACT_REQ_HEADER_SIZE: usize = 65;
-const XACT_REQ_HEADER_HEADER_BITS: usize = XACT_REQ_HEADER_SIZE * 8;
+const XACT_REQ_HEADER_SIZE: usize = 73;
+const XACT_REQ_HEADER_BITS: usize = XACT_REQ_HEADER_SIZE * 8;
 
-pub type XactReqHeaderPERCodec =
-    PERCodec<XactReqHeader, XACT_REQ_HEADER_HEADER_BITS>;
+pub type XactReqHeaderPERCodec = PERCodec<XactReqHeader, XACT_REQ_HEADER_BITS>;
 
 pub type XactBatchHeaderPERCodec =
     PERCodec<XactBatchHeader, XACT_BATCH_HEADER_BITS>;
@@ -130,6 +129,31 @@ where
         let reqsize = self.reqs.len() * XACT_REQ_HEADER_SIZE;
 
         XACT_BATCH_HEADER_SIZE + reqsize + datasize
+    }
+
+    #[inline]
+    pub fn take(self) -> (u64, Vec<XactReq<ID>>) {
+        (self.seqnum, self.reqs)
+    }
+}
+
+impl<ID> XactReq<ID>
+where
+    ID: HashID
+{
+    #[inline]
+    pub fn hash(&self) -> &ID {
+        &self.hash
+    }
+
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    #[inline]
+    pub fn take(self) -> (ID, Vec<u8>) {
+        (self.hash, self.data)
     }
 }
 
