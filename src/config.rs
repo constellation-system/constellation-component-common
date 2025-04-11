@@ -17,6 +17,7 @@
 // <https://www.gnu.org/licenses/>.
 
 use constellation_channels::config::ResolverConfig;
+use constellation_common::retry::Retry;
 use constellation_streams::config::BatchSlotsConfig;
 use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::PartyConfig;
@@ -38,7 +39,7 @@ where
     #[serde(default)]
     slots: BatchSlotsConfig,
     #[serde(flatten)]
-    parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+    parties: PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
     #[serde(flatten)]
     #[serde(default)]
     mode: SharedDatagramModeConfig
@@ -55,7 +56,7 @@ where
     #[serde(default)]
     slots: BatchSlotsConfig,
     #[serde(flatten)]
-    parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+    parties: PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
     #[serde(flatten)]
     #[serde(default)]
     mode: SharedLargeObjModeConfig
@@ -128,24 +129,29 @@ where
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "static-parties")]
 #[serde(rename_all = "kebab-case")]
-pub struct StaticPartyConfig<PartyID, Channels, Epochs, Endpoint>
+pub struct StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>
 where
     Channels: Default,
-    Epochs: Default {
+    Epochs: Default,
+    Frags: Default {
     party: PartyID,
     #[serde(flatten)]
-    config: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+    config: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+    #[serde(default)]
+    frags: Frags
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(untagged)]
-pub enum PartiesConfig<PartyID, Channels, Epochs, Endpoint>
+pub enum PartiesConfig<PartyID, Channels, Epochs, Frags, Endpoint>
 where
     Channels: Default,
-    Epochs: Default {
+    Epochs: Default,
+    Frags: Default {
     Static {
         #[serde(rename = "static")]
-        stat: Vec<StaticPartyConfig<PartyID, Channels, Epochs, Endpoint>>
+        stat:
+            Vec<StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>>
     }
 }
 
@@ -326,7 +332,7 @@ where
     #[inline]
     pub fn create(
         slots: BatchSlotsConfig,
-        parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+        parties: PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
         mode: SharedDatagramModeConfig
     ) -> MulticastDatagramBusConfig<PartyID, Channels, Epochs, Endpoint> {
         MulticastDatagramBusConfig {
@@ -339,7 +345,7 @@ where
     #[inline]
     pub fn parties(
         &self
-    ) -> &PartiesConfig<PartyID, Channels, Epochs, Endpoint> {
+    ) -> &PartiesConfig<PartyID, Channels, Epochs, (), Endpoint> {
         &self.parties
     }
 
@@ -353,7 +359,7 @@ where
         self
     ) -> (
         BatchSlotsConfig,
-        PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+        PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
         SharedDatagramModeConfig
     ) {
         (self.slots, self.parties, self.mode)
@@ -369,7 +375,7 @@ where
     #[inline]
     pub fn create(
         slots: BatchSlotsConfig,
-        parties: PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+        parties: PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
         mode: SharedLargeObjModeConfig
     ) -> MulticastLargeObjBusConfig<PartyID, Channels, Epochs, Endpoint> {
         MulticastLargeObjBusConfig {
@@ -382,7 +388,7 @@ where
     #[inline]
     pub fn parties(
         &self
-    ) -> &PartiesConfig<PartyID, Channels, Epochs, Endpoint> {
+    ) -> &PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint> {
         &self.parties
     }
 
@@ -396,26 +402,29 @@ where
         self
     ) -> (
         BatchSlotsConfig,
-        PartiesConfig<PartyID, Channels, Epochs, Endpoint>,
+        PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
         SharedLargeObjModeConfig
     ) {
         (self.slots, self.parties, self.mode)
     }
 }
 
-impl<PartyID, Channels, Epochs, Endpoint>
-    StaticPartyConfig<PartyID, Channels, Epochs, Endpoint>
+impl<PartyID, Channels, Epochs, Frags, Endpoint>
+    StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>
 where
     Channels: Default,
-    Epochs: Default
+    Epochs: Default,
+    Frags: Default
 {
     #[inline]
     pub fn create(
         party: PartyID,
+        frags: Frags,
         config: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
-    ) -> StaticPartyConfig<PartyID, Channels, Epochs, Endpoint> {
+    ) -> StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint> {
         StaticPartyConfig {
             party: party,
+            frags: frags,
             config: config
         }
     }
@@ -423,6 +432,11 @@ where
     #[inline]
     pub fn party(&self) -> &PartyID {
         &self.party
+    }
+
+    #[inline]
+    pub fn frags(&self) -> &Frags {
+        &self.frags
     }
 
     #[inline]
@@ -437,8 +451,9 @@ where
         self
     ) -> (
         PartyID,
+        Frags,
         PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
     ) {
-        (self.party, self.config)
+        (self.party, self.frags, self.config)
     }
 }

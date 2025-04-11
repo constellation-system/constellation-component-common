@@ -72,6 +72,7 @@ use constellation_streams::large_obj::LargeObjMsg;
 use constellation_streams::large_obj::LargeObjMsgCodec;
 use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjProto;
+use constellation_streams::multicast::LargeObjStreamMulticaster;
 use constellation_streams::multicast::StreamMulticaster;
 use constellation_streams::multicast::StreamMulticasterFrags;
 use constellation_streams::multicast::StreamMulticasterReporter;
@@ -80,6 +81,7 @@ use constellation_streams::select::StreamSelectorCreateError;
 use constellation_streams::select::StreamSelectorReporter;
 use constellation_streams::select::ThreadedStreamSelectorError;
 use constellation_streams::stream::ConcurrentStream;
+use constellation_streams::stream::PushStreamParties;
 use constellation_streams::stream::PushStreamReporter;
 use constellation_streams::stream::StreamID;
 use constellation_streams::threads::pull::PullStreams;
@@ -238,7 +240,7 @@ pub struct MulticastLargeObjBus<
                 Recv,
                 StreamMulticasterFrags<PartyStreamIdx, OutboundFrags>
             >,
-            StreamMulticaster<
+            LargeObjStreamMulticaster<
                 SessionAuth::Prin,
                 PartyStreamIdx,
                 LargeObjMsg<H::HashID>,
@@ -295,7 +297,7 @@ pub struct MulticastLargeObjBus<
             >,
             SharedLargeObjPushMode<
                 H,
-                StreamMulticaster<
+                LargeObjStreamMulticaster<
                     SessionAuth::Prin,
                     PartyStreamIdx,
                     LargeObjMsg<H::HashID>,
@@ -445,7 +447,9 @@ pub enum MulticastLargeObjBusRunError<Acquire, MsgCodec, Stream, Refresh> {
     },
     /// Error while [refresh](StreamSelector::refresh)ing the
     /// [StreamSelector]s.
-    Refresh { err: Refresh }
+    Refresh { err: Refresh },
+    /// Mutex poisoned.
+    MutexPoison
 }
 
 impl<
@@ -588,7 +592,7 @@ where
         mut ctx: Ctx,
         shutdown: ShutdownFlag,
         sender_notify: Notify,
-        proto: LargeObjProto<
+        mut proto: LargeObjProto<
             H,
             Msg,
             Wrapper,
@@ -684,7 +688,7 @@ where
                 let mut party_streams = Vec::with_capacity(stat.len());
 
                 for party in stat {
-                    let (party, party_config) = party.take();
+                    let (party, frags, party_config) = party.take();
 
                     debug!(target: "multicast-bus",
                            "creating stream for party {}",
@@ -724,7 +728,7 @@ where
                         stream.refresh(&mut ctx).map_err(|err| {
                             MulticastLargeObjBusRunError::Refresh { err: err }
                         })?;
-                        party_streams.push((party, stream))
+                        party_streams.push((party, frags, stream))
                     } else {
                         debug!(target: "multicast-bus",
                                "skipping self-party {}",
@@ -732,7 +736,7 @@ where
                     }
                 }
 
-                let stream: StreamMulticaster<
+                let stream: LargeObjStreamMulticaster<
                     SessionAuth::Prin,
                     PartyStreamIdx,
                     LargeObjMsg<H::HashID>,
@@ -765,6 +769,13 @@ where
                 stream
             }
         };
+
+        let Ok(parties) = stream.parties();
+        let frags = stream.frags_param();
+
+        proto
+            .set_parties(frags, parties)
+            .map_err(|_| MulticastLargeObjBusRunError::MutexPoison)?;
 
         let reporter = stream.reporter();
         let sender = PushStreamThread::create(
@@ -862,7 +873,10 @@ where
             MulticastLargeObjBusRunError::Acquire { err } => err.fmt(f),
             MulticastLargeObjBusRunError::MsgCodec { err } => err.fmt(f),
             MulticastLargeObjBusRunError::Stream { err } => err.fmt(f),
-            MulticastLargeObjBusRunError::Refresh { err } => err.fmt(f)
+            MulticastLargeObjBusRunError::Refresh { err } => err.fmt(f),
+            MulticastLargeObjBusRunError::MutexPoison => {
+                write!(f, "mutex poisoned")
+            }
         }
     }
 }

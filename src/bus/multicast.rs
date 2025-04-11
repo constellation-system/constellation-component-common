@@ -66,6 +66,7 @@ use constellation_common::sync::Notify;
 use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::channels::ChannelParam;
+use constellation_streams::multicast::DatagramStreamMulticaster;
 use constellation_streams::multicast::StreamMulticaster;
 use constellation_streams::multicast::StreamMulticasterReporter;
 use constellation_streams::select::StreamSelector;
@@ -202,7 +203,7 @@ pub struct MulticastDatagramBus<
     push:
         PushStreamThread<
             Msgs,
-            StreamMulticaster<
+            DatagramStreamMulticaster<
                 SessionAuth::Prin,
                 PartyStreamIdx,
                 Msg,
@@ -242,7 +243,7 @@ pub struct MulticastDatagramBus<
             >,
             SharedDatagramPushMode<
                 Msg,
-                StreamMulticaster<
+                DatagramStreamMulticaster<
                         SessionAuth::Prin,
                     PartyStreamIdx,
                     Msg,
@@ -567,7 +568,7 @@ where
                 let mut party_streams = Vec::with_capacity(stat.len());
 
                 for party in stat {
-                    let (party, party_config) = party.take();
+                    let (party, frags, party_config) = party.take();
 
                     debug!(target: "multicast-bus",
                            "creating stream for party {}",
@@ -601,7 +602,7 @@ where
                         stream.refresh(&mut ctx).map_err(|err| {
                             MulticastDatagramBusRunError::Refresh { err: err }
                         })?;
-                        party_streams.push((party, stream))
+                        party_streams.push((party, frags, stream))
                     } else {
                         debug!(target: "multicast-bus",
                                "skipping self-party {}",
@@ -609,7 +610,7 @@ where
                     }
                 }
 
-                let stream: StreamMulticaster<
+                let stream: DatagramStreamMulticaster<
                     SessionAuth::Prin,
                     PartyStreamIdx,
                     Msg,
