@@ -21,8 +21,9 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::upper_case_acronyms)]
 
-pub mod comm;
+pub mod bus;
 pub mod config;
+pub mod xact;
 
 #[allow(clippy::all)]
 #[rustfmt::skip]
