@@ -29,6 +29,7 @@ use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::hashid::HashID;
 use constellation_common::version::Version;
+use uuid::Uuid;
 
 use crate::generated::xact::XactBatchHeader;
 use crate::generated::xact::XactReqHeader;
@@ -50,7 +51,7 @@ where
     H: HashID {
     hash: H,
     data: Vec<u8>,
-    domain: Vec<u8>,
+    domain: Uuid,
     version: Version
 }
 
@@ -94,6 +95,9 @@ pub enum XactBatchDecodeError {
     Hash {
         err: TryFromSliceError
     },
+    UUID {
+        err: uuid::Error
+    },
     TooShort
 }
 
@@ -108,7 +112,7 @@ where
     ) -> Self
     where
         H: HashAlgo<HashID = ID>,
-        I: Iterator<Item = (Vec<u8>, Version, Vec<u8>)> {
+        I: Iterator<Item = (Uuid, Version, Vec<u8>)> {
         let reqs = reqs
             .map(|(domain, version, data)| {
                 let hash = algo.hash_bytes(&data);
@@ -208,7 +212,7 @@ where
             let header = XactReqHeader {
                 hash: req.hash.bytes().to_vec(),
                 version: req.version.clone(),
-                domain: req.domain.clone(),
+                domain: req.domain.into(),
                 len: datalen as u64
             };
 
@@ -254,12 +258,14 @@ where
                 .hash
                 .wrap_hashed_bytes(&req.hash)
                 .map_err(|err| XactBatchDecodeError::Hash { err: err })?;
+            let domain = Uuid::from_slice(&req.domain)
+                .map_err(|err| XactBatchDecodeError::UUID { err: err })?;
 
             curr += if curr + datalen <= buf.len() {
                 data.copy_from_slice(&buf[curr..curr + datalen]);
                 reqs.push(XactReq {
                     version: req.version,
-                    domain: req.domain,
+                    domain: domain,
                     hash: hash,
                     data: data
                 });
@@ -333,6 +339,7 @@ impl Display for XactBatchDecodeError {
             XactBatchDecodeError::Batch { err } => err.fmt(f),
             XactBatchDecodeError::Req { err } => err.fmt(f),
             XactBatchDecodeError::Hash { err } => err.fmt(f),
+            XactBatchDecodeError::UUID { err } => err.fmt(f),
             XactBatchDecodeError::TooShort => {
                 write!(f, "input buffer is too short")
             }
