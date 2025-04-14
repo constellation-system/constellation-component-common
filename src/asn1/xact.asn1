@@ -1,14 +1,18 @@
 Xact DEFINITIONS AUTOMATIC TAGS ::=
 BEGIN
 
-XactReqHeader ::= SEQUENCE {
-    hash OCTET STRING SIZE (64),
-    len INTEGER
-}
+IMPORTS Version FROM Version;
 
 XactBatchHeader ::= SEQUENCE {
     seqnum INTEGER,
     nreqs INTEGER (0..16777215)
+}
+
+XactReqHeader ::= SEQUENCE {
+    hash OCTET STRING SIZE (64),
+    domain OCTET STRING SIZE(16),
+    version Version,
+    len INTEGER
 }
 
 END

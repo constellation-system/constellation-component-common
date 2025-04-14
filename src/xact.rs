@@ -28,6 +28,7 @@ use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::hashid::HashID;
+use constellation_common::version::Version;
 
 use crate::generated::xact::XactBatchHeader;
 use crate::generated::xact::XactReqHeader;
@@ -35,7 +36,7 @@ use crate::generated::xact::XactReqHeader;
 const XACT_BATCH_HEADER_SIZE: usize = 11;
 const XACT_BATCH_HEADER_BITS: usize = XACT_BATCH_HEADER_SIZE * 8;
 
-const XACT_REQ_HEADER_SIZE: usize = 73;
+const XACT_REQ_HEADER_SIZE: usize = 98;
 const XACT_REQ_HEADER_BITS: usize = XACT_REQ_HEADER_SIZE * 8;
 
 pub type XactReqHeaderPERCodec = PERCodec<XactReqHeader, XACT_REQ_HEADER_BITS>;
@@ -48,7 +49,9 @@ pub struct XactReq<H>
 where
     H: HashID {
     hash: H,
-    data: Vec<u8>
+    data: Vec<u8>,
+    domain: Vec<u8>,
+    version: Version
 }
 
 #[derive(Clone, Debug)]
@@ -105,12 +108,14 @@ where
     ) -> Self
     where
         H: HashAlgo<HashID = ID>,
-        I: Iterator<Item = Vec<u8>> {
+        I: Iterator<Item = (Vec<u8>, Version, Vec<u8>)> {
         let reqs = reqs
-            .map(|data| {
+            .map(|(domain, version, data)| {
                 let hash = algo.hash_bytes(&data);
 
                 XactReq {
+                    version: version,
+                    domain: domain,
                     hash: hash,
                     data: data
                 }
@@ -202,6 +207,8 @@ where
             let datalen = req.data.len();
             let header = XactReqHeader {
                 hash: req.hash.bytes().to_vec(),
+                version: req.version.clone(),
+                domain: req.domain.clone(),
                 len: datalen as u64
             };
 
@@ -251,6 +258,8 @@ where
             curr += if curr + datalen <= buf.len() {
                 data.copy_from_slice(&buf[curr..curr + datalen]);
                 reqs.push(XactReq {
+                    version: req.version,
+                    domain: req.domain,
                     hash: hash,
                     data: data
                 });
