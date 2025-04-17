@@ -8,10 +8,17 @@ XactBatchHeader ::= SEQUENCE {
     nreqs INTEGER (0..16777215)
 }
 
+XactEffectsHeader ::= SEQUENCE {
+    hard BOOLEAN,
+    len INTEGER OPTIONAL
+}
+
 XactReqHeader ::= SEQUENCE {
     hash OCTET STRING SIZE (64),
     domain OCTET STRING SIZE(16),
     version Version,
+    instance INTEGER OPTIONAL,
+    effects XactEffectsHeader,
     len INTEGER
 }
 
