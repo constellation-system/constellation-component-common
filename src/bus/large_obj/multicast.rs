@@ -18,9 +18,9 @@
 
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use std::vec::IntoIter;
@@ -809,22 +809,22 @@ where
 
     // Consume this `MulticastLargeObjBus`, start the threads, and return a
     // cleanup object.
-    pub fn start(self) -> MulticastLargeObjBusCleanup {
+    pub fn start(self) -> Result<MulticastLargeObjBusCleanup, Error> {
         let MulticastLargeObjBus {
             pull,
             push,
             reporter,
             ..
         } = self;
-        let pull_join = pull.start(reporter);
+        let pull_join = pull.start(reporter)?;
         let notify = push.notify();
-        let sender_join = push.start();
+        let sender_join = push.start()?;
 
-        MulticastLargeObjBusCleanup {
+        Ok(MulticastLargeObjBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -868,7 +868,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             MulticastLargeObjBusRunError::Acquire { err } => err.fmt(f),
             MulticastLargeObjBusRunError::MsgCodec { err } => err.fmt(f),

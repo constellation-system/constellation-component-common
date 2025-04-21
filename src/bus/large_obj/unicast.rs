@@ -17,9 +17,9 @@
 // <https://www.gnu.org/licenses/>.
 
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 
@@ -688,22 +688,22 @@ where
 
     /// Consume this `UnicastLargeObjBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> UnicastLargeObjBusCleanup {
+    pub fn start(self) -> Result<UnicastLargeObjBusCleanup, Error> {
         let UnicastLargeObjBus {
             pull,
             push,
             reporter,
             ..
         } = self;
-        let pull_join = pull.start(reporter);
+        let pull_join = pull.start(reporter)?;
         let notify = push.notify();
-        let sender_join = push.start();
+        let sender_join = push.start()?;
 
-        UnicastLargeObjBusCleanup {
+        Ok(UnicastLargeObjBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -744,7 +744,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             UnicastLargeObjBusCreateError::Acquire { err } => err.fmt(f),
             UnicastLargeObjBusCreateError::MsgCodec { err } => err.fmt(f),

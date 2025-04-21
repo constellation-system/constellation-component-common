@@ -18,9 +18,9 @@
 
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use std::vec::IntoIter;
@@ -670,22 +670,22 @@ where
 
     /// Consume this `MulticastDatagramBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> MulticastDatagramBusCleanup {
+    pub fn start(self) -> Result<MulticastDatagramBusCleanup, Error> {
         let MulticastDatagramBus {
             pull,
             push,
             reporter,
             ..
         } = self;
-        let pull_join = pull.start(reporter);
+        let pull_join = pull.start(reporter)?;
         let notify = push.notify();
-        let sender_join = push.start();
+        let sender_join = push.start()?;
 
-        MulticastDatagramBusCleanup {
+        Ok(MulticastDatagramBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -729,7 +729,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             MulticastDatagramBusRunError::Acquire { err } => err.fmt(f),
             MulticastDatagramBusRunError::MsgCodec { err } => err.fmt(f),
