@@ -18,6 +18,7 @@
 
 use std::array::TryFromSliceError;
 use std::convert::Infallible;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt::Display;
 use std::fmt::Error;
@@ -27,6 +28,7 @@ use std::marker::PhantomData;
 
 use constellation_common::codec::per::PERCodec;
 use constellation_common::codec::Codec;
+use constellation_common::codec::DatagramCodec;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
@@ -36,11 +38,19 @@ use uuid::Uuid;
 
 use crate::generated::xact::XactBatchHeader;
 use crate::generated::xact::XactCommittedReqHeader;
+use crate::generated::xact::XactCommittedRoundHeader;
+use crate::generated::xact::XactConsensusSealHeader;
 use crate::generated::xact::XactEffectsHeader;
+use crate::generated::xact::XactErrorHeader;
 use crate::generated::xact::XactHardNone;
-use crate::generated::xact::XactLinPointHeader;
+use crate::generated::xact::XactNotifyHeader;
+use crate::generated::xact::XactNotifyStateHeader;
+use crate::generated::xact::XactResultHeader;
+use crate::generated::xact::XactResultValueHeader;
+use crate::generated::xact::XactSealHeader;
 use crate::generated::xact::XactUncommittedEffectsHeader;
 use crate::generated::xact::XactUncommittedReqHeader;
+use crate::generated::xact::XactValueHeader;
 
 const XACT_UNCOMMITTED_REQ_HEADER_SIZE: usize = 55;
 const XACT_UNCOMMITTED_REQ_HEADER_BITS: usize =
@@ -50,11 +60,42 @@ const XACT_COMMITTED_REQ_HEADER_SIZE: usize = 48;
 const XACT_COMMITTED_REQ_HEADER_BITS: usize =
     XACT_COMMITTED_REQ_HEADER_SIZE * 8;
 
+const XACT_RESULT_HEADER_SIZE: usize = 74;
+const XACT_RESULT_HEADER_BITS: usize = XACT_RESULT_HEADER_SIZE * 8;
+
+const XACT_SEAL_HEADER_SIZE: usize = 9;
+const XACT_SEAL_HEADER_BITS: usize = XACT_SEAL_HEADER_SIZE * 8;
+
+const XACT_COMMITTED_ROUND_HEADER_SIZE: usize = 1051;
+const XACT_COMMITTED_ROUND_HEADER_BITS: usize =
+    XACT_COMMITTED_ROUND_HEADER_SIZE * 8;
+
+const XACT_NOTIFY_HEADER_SIZE: usize = 81;
+const XACT_NOTIFY_HEADER_BITS: usize = XACT_NOTIFY_HEADER_SIZE * 8;
+
+const XACT_BATCH_HEADER_SIZE: usize = 12;
+const XACT_BATCH_HEADER_BITS: usize = XACT_BATCH_HEADER_SIZE * 8;
+
 type XactUncommittedReqHeaderPERCodec =
     PERCodec<XactUncommittedReqHeader, XACT_UNCOMMITTED_REQ_HEADER_BITS>;
 
 type XactCommittedReqHeaderPERCodec =
     PERCodec<XactCommittedReqHeader, XACT_COMMITTED_REQ_HEADER_BITS>;
+
+type XactCommittedRoundHeaderPERCodec =
+    PERCodec<XactCommittedRoundHeader, XACT_COMMITTED_ROUND_HEADER_BITS>;
+
+type XactResultHeaderPERCodec =
+    PERCodec<XactResultHeader, XACT_RESULT_HEADER_BITS>;
+
+type XactSealHeaderPERCodec =
+    PERCodec<XactSealHeader, XACT_SEAL_HEADER_BITS>;
+
+type XactNotifyHeaderPERCodec =
+    PERCodec<XactNotifyHeader, XACT_NOTIFY_HEADER_BITS>;
+
+type XactBatchHeaderPERCodec =
+    PERCodec<XactBatchHeader, XACT_BATCH_HEADER_BITS>;
 
 /// A point in logical time (linearization point) at which a
 /// transaction occurs.
@@ -144,6 +185,15 @@ where RoundID: Clone + From<u128> + Into<u128> {
     payload: Payload,
 }
 
+/// Object carrying a seal.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactSealed<Seal, Inner> {
+    /// The inner object.
+    inner: Inner,
+    /// The seal type.
+    seal: Seal
+}
+
 /// Committed request.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct XactCommittedReq<Payload, Effects> {
@@ -159,6 +209,121 @@ pub struct XactCommittedReq<Payload, Effects> {
     effects: Option<XactCommittedEffects<Effects>>,
     /// The request payload.
     payload: Payload,
+}
+
+/// Consensus seal information.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactConsensusSeal<H, Seal> {
+    /// The hashes in the consensus round.
+    hashes: Vec<H>,
+    /// The seals.
+    seals: Vec<Seal>
+}
+
+/// Committed round together with some number of the transactions.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactCommittedRound<RoundID, H, Seal, Payload, Effects> {
+    /// ID of the round.
+    round: RoundID,
+    /// Consensus seal, if present.
+    seal: Option<XactConsensusSeal<H, Seal>>,
+    /// Transaction requests.
+    reqs: Vec<XactCommittedReq<Payload, Effects>>
+}
+
+/// Errors that can occur executing a transaction request.
+///
+/// These represent errors that occurred at the processor, and were
+/// reported back to the requestor.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum XactError<Err> {
+    /// Application-level error.
+    Error {
+        /// The application-level error.
+        err: Err
+    },
+    /// Transaction class was not known to the processor or peer.
+    UnknownClass,
+    /// Transaction class was known, but the requested version was not
+    /// supported.
+    UnknownVersion,
+    /// Transaction class and version were known, but the instance was not.
+    UnknownInstance,
+    /// Errors occurred parsing the request.
+    InvalidPayload,
+    /// Errors occurred parsing the effect descriptions.
+    InvalidEffect,
+    /// A hard effect constraint was violated during execution.
+    EffectViolation,
+    /// Transaction was not properly authorized.
+    Unauthorized,
+    /// Internal error occurred during execution.
+    Internal
+}
+
+/// Result for a transaction request.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactResult<H, Res, Err>
+where
+    H: HashID {
+    /// Hash of the transaction request that produced the result.
+    hash: H,
+    /// The result of execution.
+    res: Result<Res, XactError<Err>>
+}
+
+/// Notifications that can occur for a transaction request.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum XactNotifyState<RoundID>
+where RoundID: Clone + From<u128> + Into<u128> {
+    /// The transaction has been accepted by a peer.
+    Accept,
+    /// The transaction has been submitted to a consensus pool.
+    Consensus,
+    /// A batch containing the transaction has been committed by the
+    /// consensus pool.
+    Commit {
+        when: XactLinPoint<RoundID>
+    },
+    /// The transaction has been dispatched to a processor.
+    Dispatch,
+    /// The transaction has been executed by at least one processor.
+    Complete {
+        when: XactLinPoint<RoundID>
+    }
+}
+
+/// Notifications about the state of a transaction request.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactNotify<RoundID, H>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    /// Notification state.
+    state: XactNotifyState<RoundID>,
+    /// Hash of the request.
+    hash: H
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactBatch<RoundID, H, Seal, Payload, Effects, Res, Err>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    committed: Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+    reqs: Vec<XactSealed<Seal, XactUncommittedReq<RoundID, Payload, Effects>>>,
+    results: Vec<XactResult<H, Res, Err>>,
+    notifies: Vec<XactNotify<RoundID, H>>
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct XactHashBatch<RoundID, H, Seal, Payload, Effects, Res, Err>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    committed: Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+    reqs: Vec<
+        XactSealed<Seal, XactUncommittedHashReq<RoundID, H, Payload, Effects>>
+    >,
+    results: Vec<XactResult<H, Res, Err>>,
+    notifies: Vec<XactNotify<RoundID, H>>
 }
 
 /// A codec for [XactUncommittedReq]s that does not produce hashes upon
@@ -187,7 +352,7 @@ where
 /// This will only encode or decode [XactUncommittedHashReq]s, which
 /// have a hash. This is typically used by processors.
 #[derive(Clone)]
-pub struct XactUncommittedReqHashCodec<H, RoundID, Payload, Effect,
+pub struct XactUncommittedReqHashCodec<RoundID, H, Payload, Effect,
                                        PayloadCodec, EffectCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
@@ -211,7 +376,7 @@ where
 /// have a hash, but will only allow `Vec<u8>` as the type for
 /// payloads and effects. This is typically used by peers.
 #[derive(Clone)]
-pub struct XactUncommittedReqBlobCodec<H, RoundID>
+pub struct XactUncommittedReqBlobCodec<RoundID, H>
 where
     H: HashAlgo,
     H::HashID: Clone,
@@ -235,6 +400,168 @@ where
     req_codec: XactCommittedReqHeaderPERCodec,
     payload_codec: PayloadCodec,
     effect_codec: EffectCodec,
+}
+
+#[derive(Clone)]
+pub struct XactCommittedRoundCodec<RoundID, H, Seal, Payload, Effect,
+                                   SealCodec, PayloadCodec, EffectCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: HashAlgo,
+    H::HashID: Clone,
+    PayloadCodec: Codec<Payload>,
+    EffectCodec: Codec<Effect>,
+    SealCodec: Codec<Seal> {
+    payload: PhantomData<Payload>,
+    effect: PhantomData<Effect>,
+    seal: PhantomData<Seal>,
+    round: PhantomData<RoundID>,
+    header_codec: XactCommittedRoundHeaderPERCodec,
+    seal_header_codec: XactSealHeaderPERCodec,
+    req_codec: XactCommittedReqCodec<Payload, Effect,
+                                     PayloadCodec, EffectCodec>,
+    seal_codec: SealCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: HashAlgo,
+    H::HashID: Clone,
+    SealCodec: Codec<Seal> {
+    seal: PhantomData<Seal>,
+    round: PhantomData<RoundID>,
+    header_codec: XactCommittedRoundHeaderPERCodec,
+    seal_header_codec: XactSealHeaderPERCodec,
+    req_codec: XactCommittedReqBlobCodec,
+    seal_codec: SealCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
+where
+    InnerCodec: Codec<Inner>,
+    SealCodec: Codec<Seal> {
+    inner: PhantomData<Inner>,
+    seal: PhantomData<Seal>,
+    header_codec: XactSealHeaderPERCodec,
+    inner_codec: InnerCodec,
+    seal_codec: SealCodec,
+}
+
+#[derive(Clone)]
+pub struct XactSealedBlobCodec<Inner, InnerCodec>
+where
+    InnerCodec: Codec<Inner> {
+    inner: PhantomData<Inner>,
+    header_codec: XactSealHeaderPERCodec,
+    inner_codec: InnerCodec,
+}
+
+#[derive(Clone)]
+pub struct XactResultCodec<H, Res, Err, ResCodec, ErrCodec>
+where
+    H: HashAlgo,
+    H::HashID: Clone,
+    ResCodec: Codec<Res>,
+    ErrCodec: Codec<Err> {
+    res: PhantomData<Res>,
+    err: PhantomData<Err>,
+    res_codec: ResCodec,
+    err_codec: ErrCodec,
+    header_codec: XactResultHeaderPERCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactResultBlobCodec<H>
+where
+    H: Clone + HashAlgo,
+    H::HashID: Clone {
+    header_codec: XactResultHeaderPERCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactBatchCodec<RoundID, H, Seal, Payload, Effect, Res, Err,
+                          SealCodec, PayloadCodec, EffectCodec,
+                          ResCodec, ErrCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: HashAlgo,
+    H::HashID: Clone,
+    PayloadCodec: Codec<Payload>,
+    EffectCodec: Codec<Effect>,
+    SealCodec: Codec<Seal>,
+    ResCodec: Codec<Res>,
+    ErrCodec: Codec<Err> {
+    header_codec: XactBatchHeaderPERCodec,
+    committed_codec: XactCommittedRoundCodec<RoundID, H, Seal, Payload, Effect,
+                                             SealCodec, PayloadCodec,
+                                             EffectCodec>,
+    req_codec: XactSealedCodec<
+        Seal,
+        XactUncommittedReq<RoundID, Payload, Effect>,
+        SealCodec,
+        XactUncommittedReqCodec<RoundID, Payload, Effect,
+                                PayloadCodec, EffectCodec>
+    >,
+    res_codec: XactResultCodec<H, Res, Err, ResCodec, ErrCodec>,
+    notify_codec: XactNotifyHeaderPERCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactBatchHashCodec<RoundID, H, Seal, Payload, Effect, Res, Err,
+                              SealCodec, PayloadCodec, EffectCodec,
+                              ResCodec, ErrCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    PayloadCodec: Codec<Payload>,
+    EffectCodec: Codec<Effect>,
+    SealCodec: Codec<Seal>,
+    ResCodec: Codec<Res>,
+    ErrCodec: Codec<Err> {
+    header_codec: XactBatchHeaderPERCodec,
+    committed_codec: XactCommittedRoundCodec<RoundID, H, Seal, Payload, Effect,
+                                             SealCodec, PayloadCodec,
+                                             EffectCodec>,
+    req_codec: XactSealedCodec<
+        Seal,
+        XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>,
+        SealCodec,
+        XactUncommittedReqHashCodec<RoundID, H, Payload, Effect,
+                                    PayloadCodec, EffectCodec>
+    >,
+    res_codec: XactResultCodec<H, Res, Err, ResCodec, ErrCodec>,
+    notify_codec: XactNotifyHeaderPERCodec,
+    hash: H
+}
+
+#[derive(Clone)]
+pub struct XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone,
+    SealCodec: Codec<Seal> {
+    header_codec: XactBatchHeaderPERCodec,
+    committed_codec: XactCommittedRoundBlobCodec<RoundID, H, Seal,
+                                                 SealCodec>,
+    req_codec: XactSealedCodec<
+        Seal,
+        XactUncommittedHashReq<RoundID, H::HashID, Vec<u8>, Vec<u8>>,
+        SealCodec,
+        XactUncommittedReqBlobCodec<RoundID, H>
+    >,
+    res_codec: XactResultBlobCodec<H>,
+    notify_codec: XactNotifyHeaderPERCodec,
+    hash: H
 }
 
 /// A codec for [XactCommittedReq]s that does not decode the payload
@@ -310,15 +637,394 @@ pub enum XactReqCodecEncodeError<Payload, Effects, Req> {
         /// Error that occurred encoding the request header.
         err: Req
     },
-    /// Error occurred writing out the hash data.
-    ///
-    /// This should normally never happen.
-    Hash {
-        /// Error that occurred writing out the hash data.
-        err: TryFromSliceError
+    /// Provided buffer was too short.
+    TooShort
+}
+
+/// Errors that can occur creating an [XactCommittedRoundCodec].
+#[derive(Debug)]
+pub enum XactCommittedRoundCodecCreateError<Seal, Req> {
+    /// Error occurred creating the seal codec.
+    Seal {
+        /// The error that occurred creating the seal codec.
+        err: Seal
+    },
+    /// Error occurred creating the req codec.
+    Req {
+        /// The error that occurred creating the req codec.
+        err: Req
+    },
+}
+
+/// Errors that can occur in an [XactCommittedRoundCodec].
+#[derive(Debug)]
+pub enum XactCommittedRoundCodecEncodeError<Header, Seal, Req> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred in the seal codec.
+    Seal {
+        /// The error that occurred in the seal codec.
+        err: Seal
+    },
+    /// Error occurred in the req codec.
+    Req {
+        /// The error that occurred in the req codec.
+        err: Req
     },
     /// Provided buffer was too short.
     TooShort
+}
+
+/// Errors that can occur in an [XactCommittedRoundCodec].
+#[derive(Debug)]
+pub enum XactCommittedRoundCodecDecodeError<Header, Seal, Req> {
+    /// Error occurred parsing the round ID.
+    Round {
+        /// Error that occurred parsing the round ID.
+        err: Vec<u8>
+    },
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred in the seal codec.
+    Seal {
+        /// The error that occurred in the seal codec.
+        err: Seal
+    },
+    /// Error occurred decoding the hash data.
+    ///
+    /// This should normally never happen.
+    Hash {
+        /// Error that occurred decoding out the hash data.
+        err: TryFromSliceError
+    },
+    /// Error occurred in the req codec.
+    Req {
+        /// The error that occurred in the req codec.
+        err: Req
+    },
+    /// Provided buffer was too short.
+    TooShort
+}
+
+/// Errors that can occur creating an [XactSealedCodec].
+#[derive(Debug)]
+pub enum XactSealedCodecCreateError<Seal, Inner> {
+    /// Error occurred creating the seal codec.
+    Seal {
+        /// The error that occurred creating the seal codec.
+        err: Seal
+    },
+    /// Error occurred creating the inner codec.
+    Inner {
+        /// The error that occurred creating the inner codec.
+        err: Inner
+    }
+}
+
+/// Errors that can occur in an [XactSealedCodec].
+#[derive(Debug)]
+pub enum XactSealedCodecError<Header, Seal, Inner> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred in the seal codec.
+    Seal {
+        /// The error that occurred in the seal codec.
+        err: Seal
+    },
+    /// Error occurred in the inner codec.
+    Inner {
+        /// The error that occurred in the inner codec.
+        err: Inner
+    },
+    /// Provided buffer was too short.
+    TooShort
+}
+
+/// Errors that can occur creating an [XactResultCodec].
+#[derive(Debug)]
+pub enum XactResultCodecCreateError<Res, Err> {
+    /// Error occurred creating the result codec.
+    Res {
+        /// The error that occurred creating the result codec.
+        err: Res
+    },
+    /// Error occurred creating the error codec.
+    Err {
+        /// The error that occurred creating the error codec.
+        err: Err
+    }
+}
+
+/// Errors that can occur in an [XactResultCodec].
+#[derive(Debug)]
+pub enum XactResultCodecEncodeError<Header, Res, Err> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred in the result codec.
+    Res {
+        /// The error that occurred in the result codec.
+        err: Res
+    },
+    /// Error occurred in the error codec.
+    Err {
+        /// The error that occurred in the error codec.
+        err: Err
+    },
+    /// Supplied buffer was too short.
+    TooShort
+}
+
+/// Errors that can occur in an [XactResultCodec].
+#[derive(Debug)]
+pub enum XactResultCodecDecodeError<Header, Res, Err> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred in the result codec.
+    Res {
+        /// The error that occurred in the result codec.
+        err: Res
+    },
+    /// Error occurred in the error codec.
+    Err {
+        /// The error that occurred in the error codec.
+        err: Err
+    },
+    /// Error occurred decoding the hash data.
+    ///
+    /// This should normally never happen.
+    Hash {
+        /// Error that occurred decoding out the hash data.
+        err: TryFromSliceError
+    },
+    /// Supplied buffer was too short.
+    TooShort
+}
+
+/// Errors that can occur creating an [XactBatchCodec].
+#[derive(Debug)]
+pub enum XactBatchCodecCreateError<Req, Committed, Res> {
+    /// Error occurred creating the uncommitted request codec.
+    Req {
+        /// The error that occurred creating the uncommitted request codec.
+        err: Req
+    },
+    /// Error occurred creating the committed round codec.
+    Committed {
+        /// The error that occurred creating the committed round codec.
+        err: Committed
+    },
+    /// Error occurred creating the result codec.
+    Res {
+        /// The error that occurred creating the result codec.
+        err: Res
+    }
+}
+
+/// Errors that can occur encoding in an [XactBatchCodec].
+#[derive(Debug)]
+pub enum XactBatchCodecEncodeError<Header, Req, Committed, Res, Notify> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred writing the uncommitted request.
+    Req {
+        /// The error that occurred writing the uncommitted request.
+        err: Req
+    },
+    /// Error occurred writing the round codec.
+    Committed {
+        /// The error that occurred writing the committed round.
+        err: Committed
+    },
+    /// Error occurred writing the result.
+    Res {
+        /// The error that occurred writing the result.
+        err: Res
+    },
+    /// Error occurred writing the notification.
+    Notify {
+        /// The error that occurred writing the notification.
+        err: Notify
+    },
+}
+
+/// Errors that can occur decoding in an [XactBatchCodec].
+#[derive(Debug)]
+pub enum XactBatchCodecDecodeError<Header, Req, Committed, Res, Notify> {
+    /// Error occurred writing the header.
+    Header {
+        /// Error that occurred writing the header.
+        err: Header
+    },
+    /// Error occurred creating the uncommitted request codec.
+    Req {
+        /// The error that occurred creating the uncommitted request codec.
+        err: Req
+    },
+    /// Error occurred creating the committed request codec.
+    Committed {
+        /// The error that occurred creating the committed request codec.
+        err: Committed
+    },
+    /// Error occurred creating the result request codec.
+    Res {
+        /// The error that occurred creating the result request codec.
+        err: Res
+    },
+    /// Error occurred creating the notify request codec.
+    Notify {
+        /// The error that occurred creating the Notify request codec.
+        err: Notify
+    },
+    Hash {
+        err: TryFromSliceError
+    },
+    State {
+        err: Vec<u8>
+    }
+}
+
+impl<RoundID> TryFrom<&'_ crate::generated::xact::XactLinPoint>
+    for XactLinPoint<RoundID>
+where RoundID: Clone + From<u128> + Into<u128> {
+    type Error = Vec<u8>;
+
+    #[inline]
+    fn try_from(
+        val: &crate::generated::xact::XactLinPoint
+    ) -> Result<Self, Self::Error> {
+        let round = val.round.clone().try_into()?;
+        let round = u128::from_le_bytes(round);
+
+        Ok(XactLinPoint {
+            round: round.into(),
+            idx: val.idx
+        })
+    }
+}
+
+impl<RoundID> TryFrom<crate::generated::xact::XactLinPoint>
+    for XactLinPoint<RoundID>
+where RoundID: Clone + From<u128> + Into<u128> {
+    type Error = Vec<u8>;
+
+    #[inline]
+    fn try_from(
+        val: crate::generated::xact::XactLinPoint
+    ) -> Result<Self, Self::Error> {
+        Self::try_from(&val)
+    }
+}
+
+impl<RoundID> From<&'_ XactLinPoint<RoundID>>
+    for crate::generated::xact::XactLinPoint
+where RoundID: Clone + From<u128> + Into<u128> {
+    #[inline]
+    fn from(val: &XactLinPoint<RoundID>) -> Self {
+        let round: u128 = val.round.clone().into();
+        let round = round.to_le_bytes().to_vec();
+
+        crate::generated::xact::XactLinPoint {
+            round: round,
+            idx: val.idx
+        }
+    }
+}
+
+impl<RoundID> From<XactLinPoint<RoundID>>
+    for crate::generated::xact::XactLinPoint
+where RoundID: Clone + From<u128> + Into<u128> {
+    #[inline]
+    fn from(val: XactLinPoint<RoundID>) -> Self {
+        Self::from(&val)
+    }
+}
+
+impl<RoundID> TryFrom<XactNotifyStateHeader> for XactNotifyState<RoundID>
+where RoundID: Clone + From<u128> + Into<u128> {
+    type Error = Vec<u8>;
+
+    #[inline]
+    fn try_from(
+        val: XactNotifyStateHeader
+    ) -> Result<Self, Self::Error> {
+        match val {
+            XactNotifyStateHeader::Accept(_) =>
+                Ok(XactNotifyState::Accept),
+            XactNotifyStateHeader::Consensus(_) =>
+                Ok(XactNotifyState::Consensus),
+            XactNotifyStateHeader::Commit(state) =>
+                Ok(XactNotifyState::Commit {
+                    when: state.when.try_into()?
+                }),
+            XactNotifyStateHeader::Dispatch(_) =>
+                Ok(XactNotifyState::Dispatch),
+            XactNotifyStateHeader::Complete(state) =>
+                Ok(XactNotifyState::Complete {
+                    when: state.when.try_into()?
+                }),
+        }
+    }
+}
+
+impl<RoundID> From<&'_ XactNotifyState<RoundID>>
+    for XactNotifyStateHeader
+where RoundID: Clone + From<u128> + Into<u128> {
+    #[inline]
+    fn from(
+        val: &XactNotifyState<RoundID>
+    ) -> Self {
+        match val {
+            XactNotifyState::Accept =>
+                XactNotifyStateHeader::Accept(Default::default()),
+            XactNotifyState::Consensus =>
+                XactNotifyStateHeader::Consensus(Default::default()),
+            XactNotifyState::Commit { when } => {
+                let state = crate::generated::xact::XactCommitState {
+                    when: when.into()
+                };
+
+                XactNotifyStateHeader::Commit(state)
+            },
+            XactNotifyState::Dispatch =>
+                XactNotifyStateHeader::Dispatch(Default::default()),
+            XactNotifyState::Complete { when } => {
+                let state = crate::generated::xact::XactCommitState {
+                    when: when.into()
+                };
+
+                XactNotifyStateHeader::Complete(state)
+            },
+        }
+    }
+}
+
+impl<RoundID> From<XactNotifyState<RoundID>>
+    for XactNotifyStateHeader
+where RoundID: Clone + From<u128> + Into<u128> {
+    #[inline]
+    fn from(
+        val: XactNotifyState<RoundID>
+    ) -> Self {
+        XactNotifyStateHeader::from(&val)
+    }
 }
 
 impl<RoundID> XactLinPoint<RoundID>
@@ -370,7 +1076,7 @@ where
     type DecodeError = XactReqCodecDecodeError<
         PayloadCodec::DecodeError,
         EffectCodec::DecodeError,
-        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
     >;
     type EncodeError = XactReqCodecEncodeError<
         PayloadCodec::EncodeError,
@@ -480,15 +1186,7 @@ where
             XactEffects::HardNone { when } => {
                 let effects_header =
                     XactUncommittedEffectsHeader::HardNone(XactHardNone {
-                        when: when.as_ref().map(|when| {
-                            let round: u128 = when.round.clone().into();
-                            let round = round.to_le_bytes().to_vec();
-
-                            XactLinPointHeader {
-                                round: round,
-                                idx: when.idx
-                            }
-                        })
+                        when: when.as_ref().map(|when| when.into())
                     });
                 let header = XactUncommittedReqHeader {
                     version: req.version.clone(),
@@ -614,9 +1312,9 @@ where
     }
 }
 
-impl<H, RoundID>
+impl<RoundID, H>
     Codec<XactUncommittedHashReq<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
-    for XactUncommittedReqBlobCodec<H, RoundID>
+    for XactUncommittedReqBlobCodec<RoundID, H>
 where
     H: HashAlgo + Default,
     H::HashID: Clone,
@@ -629,7 +1327,7 @@ where
     type DecodeError = XactReqCodecDecodeError<
         Infallible,
         Infallible,
-        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
     >;
     type EncodeError = XactReqCodecEncodeError<
         Infallible,
@@ -713,15 +1411,7 @@ where
             XactEffects::HardNone { when } => {
                 let effects_header =
                     XactUncommittedEffectsHeader::HardNone(XactHardNone {
-                        when: when.as_ref().map(|when| {
-                            let round: u128 = when.round.clone().into();
-                            let round = round.to_le_bytes().to_vec();
-
-                            XactLinPointHeader {
-                                round: round,
-                                idx: when.idx
-                            }
-                        })
+                        when: when.as_ref().map(|when| when.into())
                     });
                 let header = XactUncommittedReqHeader {
                     version: req.version.clone(),
@@ -857,7 +1547,7 @@ where
 
 impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
     Codec<XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>>
-    for XactUncommittedReqHashCodec<H, RoundID, Payload, Effect,
+    for XactUncommittedReqHashCodec<RoundID, H, Payload, Effect,
                                     PayloadCodec, EffectCodec>
 where
     H: HashAlgo + Default,
@@ -873,7 +1563,7 @@ where
     type DecodeError = XactReqCodecDecodeError<
         PayloadCodec::DecodeError,
         EffectCodec::DecodeError,
-        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
     >;
     type EncodeError = XactReqCodecEncodeError<
         PayloadCodec::EncodeError,
@@ -986,15 +1676,7 @@ where
             XactEffects::HardNone { when } => {
                 let effects_header =
                     XactUncommittedEffectsHeader::HardNone(XactHardNone {
-                        when: when.as_ref().map(|when| {
-                            let round: u128 = when.round.clone().into();
-                            let round = round.to_le_bytes().to_vec();
-
-                            XactLinPointHeader {
-                                round: round,
-                                idx: when.idx
-                            }
-                        })
+                        when: when.as_ref().map(|when| when.into())
                     });
                 let header = XactUncommittedReqHeader {
                     version: req.version.clone(),
@@ -1139,7 +1821,7 @@ where
     type DecodeError = XactReqCodecDecodeError<
         PayloadCodec::DecodeError,
         EffectCodec::DecodeError,
-        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
     >;
     type EncodeError = XactReqCodecEncodeError<
         PayloadCodec::EncodeError,
@@ -1332,9 +2014,6 @@ where
     }
 }
 
-
-
-
 impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
     type CreateError = XactReqCodecCreateError<
         Infallible,
@@ -1343,7 +2022,7 @@ impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
     type DecodeError = XactReqCodecDecodeError<
         Infallible,
         Infallible,
-        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+        <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
     >;
     type EncodeError = XactReqCodecEncodeError<
         Infallible,
@@ -1508,8 +2187,2346 @@ impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
     }
 }
 
+impl<Seal, Inner, SealCodec, InnerCodec> Codec<XactSealed<Seal, Inner>>
+    for XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
+where
+    SealCodec: Codec<Seal>,
+    InnerCodec: Codec<Inner>
+{
+    type CreateError = XactSealedCodecCreateError<
+        SealCodec::CreateError,
+        InnerCodec::CreateError,
+    >;
+    type DecodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
+        SealCodec::DecodeError,
+        InnerCodec::DecodeError,
+    >;
+    type EncodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
+        SealCodec::EncodeError,
+        InnerCodec::EncodeError,
+    >;
+    type Param = (SealCodec::Param, InnerCodec::Param);
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let (seal, inner) = param;
+        let seal_codec = SealCodec::create(seal)
+            .map_err(|err| XactSealedCodecCreateError::Seal {
+                err: err
+            })?;
+        let inner_codec = InnerCodec::create(inner)
+            .map_err(|err| XactSealedCodecCreateError::Inner {
+                err: err
+            })?;
+
+        Ok(XactSealedCodec {
+            seal: PhantomData,
+            inner: PhantomData,
+            header_codec: XactSealHeaderPERCodec::default(),
+            seal_codec: seal_codec,
+            inner_codec: inner_codec,
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactSealed<Seal, Inner>
+    ) -> usize {
+        let seal = self.seal_codec.buf_size(&val.seal) + 9;
+        let inner = self.inner_codec.buf_size(&val.inner);
+
+        seal + inner
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactSealed<Seal, Inner>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let mut curr = 0;
+
+        curr += self
+            .inner_codec
+            .encode(&val.inner, &mut buf[curr..])
+            .map_err(|err| XactSealedCodecError::Inner {
+                err: err
+            })?;
+
+        let seal = self
+            .seal_codec
+            .encode_to_vec(&val.seal)
+            .map_err(|err| XactSealedCodecError::Seal {
+                err: err
+            })?;
+        let seal_len = seal.len();
+        let header = XactSealHeader {
+            len: seal_len as u64
+        };
+
+        curr += self
+            .header_codec
+            .encode(&header, &mut buf[curr..])
+            .map_err(|err| XactSealedCodecError::Header {
+                err: err
+            })?;
+
+        if curr + seal_len < buf.len() {
+            buf[curr..curr + seal_len].copy_from_slice(&seal[..]);
+
+            curr += seal_len;
+        } else {
+            return Err(XactSealedCodecError::TooShort)
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<(XactSealed<Seal, Inner>, usize), Self::DecodeError>
+    {
+        let mut curr = 0;
+        let (inner, nbytes) = self
+            .inner_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactSealedCodecError::Inner {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactSealedCodecError::Header {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let (seal, nbytes) = self
+            .seal_codec
+            .decode(&buf[curr..curr + header.len as usize])
+            .map_err(|err| XactSealedCodecError::Seal {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        Ok((XactSealed {
+            inner: inner,
+            seal: seal
+        }, curr))
+    }
+}
+
+impl<Inner, InnerCodec> Codec<XactSealed<Vec<u8>, Inner>>
+    for XactSealedBlobCodec<Inner, InnerCodec>
+where
+    InnerCodec: Codec<Inner>
+{
+    type CreateError = XactSealedCodecCreateError<
+        Infallible,
+        InnerCodec::CreateError,
+    >;
+    type DecodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
+        Infallible,
+        InnerCodec::DecodeError,
+    >;
+    type EncodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
+        Infallible,
+        InnerCodec::EncodeError,
+    >;
+    type Param = InnerCodec::Param;
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let inner_codec = InnerCodec::create(param)
+            .map_err(|err| XactSealedCodecCreateError::Inner {
+                err: err
+            })?;
+
+        Ok(XactSealedBlobCodec {
+            inner: PhantomData,
+            header_codec: XactSealHeaderPERCodec::default(),
+            inner_codec: inner_codec,
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactSealed<Vec<u8>, Inner>
+    ) -> usize {
+        let seal = val.seal.len() + 9;
+        let inner = self.inner_codec.buf_size(&val.inner);
+
+        seal + inner
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactSealed<Vec<u8>, Inner>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let mut curr = 0;
+
+        curr += self
+            .inner_codec
+            .encode(&val.inner, &mut buf[curr..])
+            .map_err(|err| XactSealedCodecError::Inner {
+                err: err
+            })?;
+
+        let seal_len = val.seal.len();
+        let header = XactSealHeader {
+            len: seal_len as u64
+        };
+
+        curr += self
+            .header_codec
+            .encode(&header, &mut buf[curr..])
+            .map_err(|err| XactSealedCodecError::Header {
+                err: err
+            })?;
+
+        if curr + seal_len < buf.len() {
+            buf[curr..curr + seal_len].copy_from_slice(&val.seal[..]);
+
+            curr += seal_len;
+        } else {
+            return Err(XactSealedCodecError::TooShort)
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<(XactSealed<Vec<u8>, Inner>, usize), Self::DecodeError>
+    {
+        let mut curr = 0;
+        let (inner, nbytes) = self
+            .inner_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactSealedCodecError::Inner {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactSealedCodecError::Header {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let seal = if curr + header.len as usize <= buf.len() {
+            let data = buf[curr..curr + header.len as usize].to_vec();
+
+            curr += header.len as usize;
+
+            Ok(data)
+        } else {
+            Err(XactSealedCodecError::TooShort)
+        }?;
+
+        Ok((XactSealed {
+            inner: inner,
+            seal: seal
+        }, curr))
+    }
+}
+
+impl<RoundID, H, Seal, Payload, Effect, SealCodec, PayloadCodec, EffectCodec>
+    Codec<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+    for XactCommittedRoundCodec<RoundID, H, Seal, Payload, Effect,
+                                SealCodec, PayloadCodec, EffectCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Codec<Payload>,
+    EffectCodec: Codec<Effect>,
+    SealCodec: Codec<Seal>,
+{
+    type CreateError = XactCommittedRoundCodecCreateError<
+        SealCodec::CreateError,
+        XactReqCodecCreateError<
+            PayloadCodec::CreateError,
+            EffectCodec::CreateError
+        >
+    >;
+    type DecodeError = XactCommittedRoundCodecDecodeError<
+        <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::DecodeError,
+        SealCodec::DecodeError,
+        XactReqCodecDecodeError<
+            PayloadCodec::DecodeError,
+            EffectCodec::DecodeError,
+            <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::DecodeError
+        >
+    >;
+    type EncodeError = XactCommittedRoundCodecEncodeError<
+        <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::EncodeError,
+        SealCodec::EncodeError,
+        XactReqCodecEncodeError<
+            PayloadCodec::EncodeError,
+            EffectCodec::EncodeError,
+            <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::EncodeError
+        >
+    >;
+    type Param = (SealCodec::Param, PayloadCodec::Param, EffectCodec::Param);
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let (seal, payload, effect) = param;
+        let seal_codec = SealCodec::create(seal)
+            .map_err(|err| XactCommittedRoundCodecCreateError::Seal {
+                err: err
+            })?;
+        let req_codec = XactCommittedReqCodec::create((payload, effect))
+            .map_err(|err| XactCommittedRoundCodecCreateError::Req {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactCommittedRoundCodec {
+            payload: PhantomData,
+            effect: PhantomData,
+            round: PhantomData,
+            seal: PhantomData,
+            header_codec: XactCommittedRoundHeaderPERCodec::default(),
+            seal_header_codec: XactSealHeaderPERCodec::default(),
+            req_codec: req_codec,
+            seal_codec: seal_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>
+    ) -> usize {
+        let round = 16;
+        let seal = match &val.seal {
+            Some(XactConsensusSeal { hashes, seals }) => {
+                let nhashes = hashes.len();
+                let hashes = 64 * nhashes;
+                let mut len = 1;
+
+                for seal in seals.iter() {
+                    len += self.seal_codec.buf_size(seal)
+                }
+
+                hashes + len
+            }
+            None => 1
+        };
+        let mut reqs = 1;
+
+        for req in val.reqs.iter() {
+            reqs += self.req_codec.buf_size(req)
+        }
+
+        round + seal + reqs
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let round: u128 = val.round.clone().into();
+        let round = round.to_le_bytes().to_vec();
+        let mut curr = 0;
+
+        // First encode the header.
+        if let Some(seal) = &val.seal {
+            let hashes = seal.hashes.iter()
+                .map(|hash| hash.bytes().to_vec())
+                .collect();
+            let header = XactCommittedRoundHeader {
+                seal: Some(XactConsensusSealHeader {
+                    hashes: hashes,
+                    nseals: seal.seals.len() as u64
+                }),
+                round: round,
+                nreqs: val.reqs.len() as u8
+            };
+
+            curr += self
+                .header_codec
+                .encode(&header, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                    err: err
+                })?;
+
+            // Encode the seals
+            for seal in seal.seals.iter() {
+                let seal = self
+                    .seal_codec
+                    .encode_to_vec(&seal)
+                    .map_err(|err| XactCommittedRoundCodecEncodeError::Seal {
+                        err: err
+                    })?;
+                let seal_len = seal.len();
+                let header = XactSealHeader {
+                    len: seal_len as u64
+                };
+
+                curr += self
+                    .seal_header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if curr + seal_len < buf.len() {
+                    buf[curr..curr + seal_len].copy_from_slice(&seal[..]);
+
+                    curr += seal_len;
+                } else {
+                    return Err(XactCommittedRoundCodecEncodeError::TooShort)
+                }
+            }
+        } else {
+            let header = XactCommittedRoundHeader {
+                round: round,
+                seal: None,
+                nreqs: val.reqs.len() as u8
+            };
+
+            curr += self
+                .header_codec
+                .encode(&header, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                    err: err
+                })?;
+        }
+
+        // Encode the requests.
+        for req in val.reqs.iter() {
+            curr += self
+                .req_codec
+                .encode(&req, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Req {
+                    err: err
+                })?;
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+            (XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>,
+             usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactCommittedRoundCodecDecodeError::Header {
+                err: err
+            })?;
+        let round = header.round.clone().try_into()
+            .map_err(|err| XactCommittedRoundCodecDecodeError::Round {
+                err: err
+            })?;
+        let round = u128::from_le_bytes(round);
+        let round = round.into();
+
+        curr += nbytes;
+
+        let seal = match &header.seal {
+            Some(seal) => {
+                let mut hashes = Vec::with_capacity(seal.hashes.len());
+
+                for hash in seal.hashes.iter() {
+                    let hash = self.hash.wrap_hashed_bytes(hash)
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Hash {
+                                     err: err
+                                 })?;
+
+                    hashes.push(hash);
+                }
+
+                let mut seals = Vec::with_capacity(seal.nseals as usize);
+
+                for _ in 0..seal.nseals {
+                    let (header, nbytes) = self
+                        .seal_header_codec
+                        .decode(&buf[curr..])
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Header {
+                                     err: err
+                                 })?;
+
+                    curr += nbytes;
+
+                    let (seal, nbytes) = self
+                        .seal_codec
+                        .decode(&buf[curr..curr + header.len as usize])
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Seal {
+                                     err: err
+                                 })?;
+
+                    curr += nbytes;
+                    seals.push(seal)
+                }
+
+                Some(XactConsensusSeal {
+                    hashes: hashes,
+                    seals: seals
+                })
+            }
+            None => None
+        };
+
+        let nreqs = header.nreqs as usize;
+        let mut reqs = Vec::with_capacity(nreqs);
+
+        for _ in 0..nreqs {
+            let (req, nbytes) = self
+                .req_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecDecodeError::Req {
+                    err: err
+                })?;
+
+            curr += nbytes;
+            reqs.push(req);
+        }
+
+        Ok((XactCommittedRound {
+            round: round,
+            seal: seal,
+            reqs: reqs,
+        }, curr))
+    }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Codec<XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>>
+    for XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Codec<Seal>,
+{
+    type CreateError = XactCommittedRoundCodecCreateError<
+        SealCodec::CreateError,
+        XactReqCodecCreateError<
+            Infallible,
+            Infallible
+        >
+    >;
+    type DecodeError = XactCommittedRoundCodecDecodeError<
+        <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::DecodeError,
+        SealCodec::DecodeError,
+        XactReqCodecDecodeError<
+            Infallible,
+            Infallible,
+            <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::DecodeError
+        >
+    >;
+    type EncodeError = XactCommittedRoundCodecEncodeError<
+        <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::EncodeError,
+        SealCodec::EncodeError,
+        XactReqCodecEncodeError<
+            Infallible,
+            Infallible,
+            <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::EncodeError
+        >
+    >;
+    type Param = SealCodec::Param;
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let seal_codec = SealCodec::create(param)
+            .map_err(|err| XactCommittedRoundCodecCreateError::Seal {
+                err: err
+            })?;
+        let req_codec = XactCommittedReqBlobCodec::create(())
+            .map_err(|err| XactCommittedRoundCodecCreateError::Req {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactCommittedRoundBlobCodec {
+            round: PhantomData,
+            seal: PhantomData,
+            header_codec: XactCommittedRoundHeaderPERCodec::default(),
+            seal_header_codec: XactSealHeaderPERCodec::default(),
+            req_codec: req_codec,
+            seal_codec: seal_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>
+    ) -> usize {
+        let round = 16;
+        let seal = match &val.seal {
+            Some(XactConsensusSeal { hashes, seals }) => {
+                let nhashes = hashes.len();
+                let hashes = 64 * nhashes;
+                let mut len = 1;
+
+                for seal in seals.iter() {
+                    len += self.seal_codec.buf_size(seal)
+                }
+
+                hashes + len
+            }
+            None => 1
+        };
+        let mut reqs = 1;
+
+        for req in val.reqs.iter() {
+            reqs += self.req_codec.buf_size(req)
+        }
+
+        round + seal + reqs
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let round: u128 = val.round.clone().into();
+        let round = round.to_le_bytes().to_vec();
+        let mut curr = 0;
+
+        // First encode the header.
+        if let Some(seal) = &val.seal {
+            let hashes = seal.hashes.iter()
+                .map(|hash| hash.bytes().to_vec())
+                .collect();
+            let header = XactCommittedRoundHeader {
+                seal: Some(XactConsensusSealHeader {
+                    hashes: hashes,
+                    nseals: seal.seals.len() as u64
+                }),
+                round: round,
+                nreqs: val.reqs.len() as u8
+            };
+
+            curr += self
+                .header_codec
+                .encode(&header, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                    err: err
+                })?;
+
+            // Encode the seals
+            for seal in seal.seals.iter() {
+                let seal = self
+                    .seal_codec
+                    .encode_to_vec(&seal)
+                    .map_err(|err| XactCommittedRoundCodecEncodeError::Seal {
+                        err: err
+                    })?;
+                let seal_len = seal.len();
+                let header = XactSealHeader {
+                    len: seal_len as u64
+                };
+
+                curr += self
+                    .seal_header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if curr + seal_len < buf.len() {
+                    buf[curr..curr + seal_len].copy_from_slice(&seal[..]);
+
+                    curr += seal_len;
+                } else {
+                    return Err(XactCommittedRoundCodecEncodeError::TooShort)
+                }
+            }
+        } else {
+            let header = XactCommittedRoundHeader {
+                round: round,
+                seal: None,
+                nreqs: val.reqs.len() as u8
+            };
+
+            curr += self
+                .header_codec
+                .encode(&header, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Header {
+                    err: err
+                })?;
+        }
+
+        // Encode the requests.
+        for req in val.reqs.iter() {
+            curr += self
+                .req_codec
+                .encode(&req, &mut buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecEncodeError::Req {
+                    err: err
+                })?;
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+            (XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>,
+             usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactCommittedRoundCodecDecodeError::Header {
+                err: err
+            })?;
+        let round = header.round.clone().try_into()
+            .map_err(|err| XactCommittedRoundCodecDecodeError::Round {
+                err: err
+            })?;
+        let round = u128::from_le_bytes(round);
+        let round = round.into();
+
+        curr += nbytes;
+
+        let seal = match &header.seal {
+            Some(seal) => {
+                let mut hashes = Vec::with_capacity(seal.hashes.len());
+
+                for hash in seal.hashes.iter() {
+                    let hash = self.hash.wrap_hashed_bytes(hash)
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Hash {
+                                     err: err
+                                 })?;
+
+                    hashes.push(hash);
+                }
+
+                let mut seals = Vec::with_capacity(seal.nseals as usize);
+
+                for _ in 0..seal.nseals {
+                    let (header, nbytes) = self
+                        .seal_header_codec
+                        .decode(&buf[curr..])
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Header {
+                                     err: err
+                                 })?;
+
+                    curr += nbytes;
+
+                    let (seal, nbytes) = self
+                        .seal_codec
+                        .decode(&buf[curr..curr + header.len as usize])
+                        .map_err(|err|
+                                 XactCommittedRoundCodecDecodeError::Seal {
+                                     err: err
+                                 })?;
+
+                    curr += nbytes;
+                    seals.push(seal)
+                }
+
+                Some(XactConsensusSeal {
+                    hashes: hashes,
+                    seals: seals
+                })
+            }
+            None => None
+        };
+
+        let nreqs = header.nreqs as usize;
+        let mut reqs = Vec::with_capacity(nreqs);
+
+        for _ in 0..nreqs {
+            let (req, nbytes) = self
+                .req_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactCommittedRoundCodecDecodeError::Req {
+                    err: err
+                })?;
+
+            curr += nbytes;
+            reqs.push(req);
+        }
+
+        Ok((XactCommittedRound {
+            round: round,
+            seal: seal,
+            reqs: reqs,
+        }, curr))
+    }
+}
+
+impl<H, Res, Err, ResCodec, ErrCodec> Codec<XactResult<H::HashID, Res, Err>>
+    for XactResultCodec<H, Res, Err, ResCodec, ErrCodec>
+where
+    H: HashAlgo + Default,
+    H::HashID: Clone,
+    ResCodec: Codec<Res>,
+    ErrCodec: Codec<Err>
+{
+    type CreateError = XactResultCodecCreateError<
+        ResCodec::CreateError,
+        ErrCodec::CreateError,
+    >;
+    type DecodeError = XactResultCodecDecodeError<
+        <XactResultHeaderPERCodec as Codec<XactResultHeader>>::DecodeError,
+        ResCodec::DecodeError,
+        ErrCodec::DecodeError,
+    >;
+    type EncodeError = XactResultCodecEncodeError<
+        <XactResultHeaderPERCodec as Codec<XactResultHeader>>::EncodeError,
+        ResCodec::EncodeError,
+        ErrCodec::EncodeError,
+    >;
+    type Param = (ResCodec::Param, ErrCodec::Param);
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let (res, err) = param;
+        let res_codec = ResCodec::create(res)
+            .map_err(|err| XactResultCodecCreateError::Res {
+                err: err
+            })?;
+        let err_codec = ErrCodec::create(err)
+            .map_err(|err| XactResultCodecCreateError::Err {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactResultCodec {
+            res: PhantomData,
+            err: PhantomData,
+            header_codec: XactResultHeaderPERCodec::default(),
+            res_codec: res_codec,
+            err_codec: err_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactResult<H::HashID, Res, Err>
+    ) -> usize {
+        let hash = 64;
+        let val = match &val.res {
+            Ok(res) => self.res_codec.buf_size(&res) + 9,
+            Err(XactError::Error { err }) => self.err_codec.buf_size(&err) + 9,
+            Err(XactError::UnknownClass) |
+            Err(XactError::UnknownVersion) |
+            Err(XactError::UnknownInstance) |
+            Err(XactError::InvalidPayload) |
+            Err(XactError::InvalidEffect) |
+            Err(XactError::EffectViolation) |
+            Err(XactError::Unauthorized) |
+            Err(XactError::Internal) => 1
+        };
+
+        hash + val
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactResult<H::HashID, Res, Err>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        match &val.res {
+            Ok(res) => {
+                let res = self
+                    .res_codec
+                    .encode_to_vec(res)
+                    .map_err(|err| XactResultCodecEncodeError::Res {
+                        err: err
+                    })?;
+                let res_len = res.len();
+                let header = XactResultHeader {
+                    hash: val.hash.bytes().to_vec(),
+                    value: XactResultValueHeader::Ok(XactValueHeader {
+                        len: res.len() as u64
+                    })
+                };
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactResultCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if res_len != 0 {
+                    if curr + res_len < buf.len() {
+                        buf[curr..curr + res_len].copy_from_slice(&res[..]);
+
+                        curr += res_len;
+                    } else {
+                        return Err(XactResultCodecEncodeError::TooShort)
+                    }
+                }
+
+                Ok(curr)
+            }
+            Err(err) => {
+                let (err, data) = match err {
+                    XactError::Error { err } => {
+                        let err = self
+                            .err_codec
+                            .encode_to_vec(err)
+                            .map_err(|err| XactResultCodecEncodeError::Err {
+                                err: err
+                            })?;
+
+                        Ok((XactResultValueHeader::Error(XactErrorHeader {
+                            len: err.len() as u64
+                        }),
+                            Some(err)
+                        ))
+                    }
+                    XactError::UnknownClass => Ok((
+                        XactResultValueHeader::UnknownClass(Default::default()),
+                        None
+                    )),
+                    XactError::UnknownVersion => Ok((
+                        XactResultValueHeader::UnknownVersion(Default::default()),
+                        None
+                    )),
+                    XactError::UnknownInstance => Ok((
+                        XactResultValueHeader::UnknownInstance(Default::default()),
+                        None
+                    )),
+                    XactError::InvalidPayload => Ok((
+                        XactResultValueHeader::InvalidPayload(Default::default()),
+                        None
+                    )),
+                    XactError::InvalidEffect => Ok((
+                        XactResultValueHeader::InvalidEffect(Default::default()),
+                        None
+                    )),
+                    XactError::EffectViolation => Ok((
+                        XactResultValueHeader::EffectViolation(Default::default()),
+                        None
+                    )),
+                    XactError::Unauthorized => Ok((
+                        XactResultValueHeader::Unauthorized(Default::default()),
+                        None
+                    )),
+                    XactError::Internal => Ok((
+                        XactResultValueHeader::Internal(Default::default()),
+                        None
+                    ))
+                }?;
+                let header = XactResultHeader {
+                    hash: val.hash.bytes().to_vec(),
+                    value: err,
+                };
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactResultCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if let Some(data) = data {
+                    let err_len = data.len();
+
+                    if curr + err_len < buf.len() {
+                        buf[curr..curr + err_len].copy_from_slice(&data[..]);
+
+                        curr += err_len;
+                    } else {
+                        return Err(XactResultCodecEncodeError::TooShort)
+                    }
+                }
+
+                Ok(curr)
+
+            }
+        }
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<(XactResult<H::HashID, Res, Err>, usize), Self::DecodeError>
+    {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactResultCodecDecodeError::Header {
+                err: err
+            })?;
+        let hash = self.hash.wrap_hashed_bytes(&header.hash)
+            .map_err(|err| XactResultCodecDecodeError::Hash {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        match &header.value {
+            XactResultValueHeader::Ok(XactValueHeader { len }) => {
+                let len = *len as usize;
+                let (res, _) = self
+                    .res_codec
+                    .decode(&buf[curr..curr + len])
+                    .map_err(|err| XactResultCodecDecodeError::Res {
+                        err: err
+                    })?;
+
+                curr += len;
+
+                let res = XactResult {
+                    hash: hash,
+                    res: Ok(res)
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Error(XactErrorHeader { len }) => {
+                let len = *len as usize;
+                let (err, _) = self
+                    .err_codec
+                    .decode(&buf[curr..curr + len])
+                    .map_err(|err| XactResultCodecDecodeError::Err {
+                        err: err
+                    })?;
+
+                curr += len;
+
+                let res = XactResult {
+                    hash: hash,
+                    res: Err(XactError::Error {
+                        err: err
+                    })
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::UnknownClass(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownClass),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::UnknownVersion(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownVersion),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::UnknownInstance(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownInstance),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::InvalidPayload(_) => {
+                let res = XactResult {
+                    res: Err(XactError::InvalidPayload),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::InvalidEffect(_) => {
+                let res = XactResult {
+                    res: Err(XactError::InvalidEffect),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::EffectViolation(_) => {
+                let res = XactResult {
+                    res: Err(XactError::EffectViolation),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Unauthorized(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Unauthorized),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Internal(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Internal),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+        }
+    }
+}
+
+impl<H> Codec<XactResult<H::HashID, Vec<u8>, Vec<u8>>>
+    for XactResultBlobCodec<H>
+where
+    H: HashAlgo + Clone + Default,
+    H::HashID: Clone,
+{
+    type CreateError = XactResultCodecCreateError<
+        Infallible,
+        Infallible
+    >;
+    type DecodeError = XactResultCodecDecodeError<
+        <XactResultHeaderPERCodec as Codec<XactResultHeader>>::DecodeError,
+        Infallible,
+        Infallible
+    >;
+    type EncodeError = XactResultCodecEncodeError<
+        <XactResultHeaderPERCodec as Codec<XactResultHeader>>::EncodeError,
+        Infallible,
+        Infallible
+    >;
+    type Param = ();
+
+    fn create(_param: Self::Param) -> Result<Self, Self::CreateError> {
+        let hash = H::default();
+
+        Ok(XactResultBlobCodec {
+            header_codec: XactResultHeaderPERCodec::default(),
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactResult<H::HashID, Vec<u8>, Vec<u8>>
+    ) -> usize {
+        let hash = 64;
+        let val = match &val.res {
+            Ok(res) => res.len() + 9,
+            Err(XactError::Error { err }) => err.len() + 9,
+            Err(XactError::UnknownClass) |
+            Err(XactError::UnknownVersion) |
+            Err(XactError::UnknownInstance) |
+            Err(XactError::InvalidPayload) |
+            Err(XactError::InvalidEffect) |
+            Err(XactError::EffectViolation) |
+            Err(XactError::Unauthorized) |
+            Err(XactError::Internal) => 1
+        };
+
+        hash + val
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactResult<H::HashID, Vec<u8>, Vec<u8>>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        match &val.res {
+            Ok(res) => {
+                let res_len = res.len();
+                let header = XactResultHeader {
+                    hash: val.hash.bytes().to_vec(),
+                    value: XactResultValueHeader::Ok(XactValueHeader {
+                        len: res.len() as u64
+                    })
+                };
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactResultCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if res_len != 0 {
+                    if curr + res_len < buf.len() {
+                        buf[curr..curr + res_len].copy_from_slice(&res[..]);
+
+                        curr += res_len;
+                    } else {
+                        return Err(XactResultCodecEncodeError::TooShort)
+                    }
+                }
+
+                Ok(curr)
+            }
+            Err(err) => {
+                let (err, data) = match err {
+                    XactError::Error { err } => {
+                        Ok((XactResultValueHeader::Error(XactErrorHeader {
+                            len: err.len() as u64
+                        }),
+                            Some(err.to_vec())
+                        ))
+                    }
+                    XactError::UnknownClass => Ok((
+                        XactResultValueHeader::UnknownClass(Default::default()),
+                        None
+                    )),
+                    XactError::UnknownVersion => Ok((
+                        XactResultValueHeader::UnknownVersion(Default::default()),
+                        None
+                    )),
+                    XactError::UnknownInstance => Ok((
+                        XactResultValueHeader::UnknownInstance(Default::default()),
+                        None
+                    )),
+                    XactError::InvalidPayload => Ok((
+                        XactResultValueHeader::InvalidPayload(Default::default()),
+                        None
+                    )),
+                    XactError::InvalidEffect => Ok((
+                        XactResultValueHeader::InvalidEffect(Default::default()),
+                        None
+                    )),
+                    XactError::EffectViolation => Ok((
+                        XactResultValueHeader::EffectViolation(Default::default()),
+                        None
+                    )),
+                    XactError::Unauthorized => Ok((
+                        XactResultValueHeader::Unauthorized(Default::default()),
+                        None
+                    )),
+                    XactError::Internal => Ok((
+                        XactResultValueHeader::Internal(Default::default()),
+                        None
+                    ))
+                }?;
+                let header = XactResultHeader {
+                    hash: val.hash.bytes().to_vec(),
+                    value: err,
+                };
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| XactResultCodecEncodeError::Header {
+                        err: err
+                    })?;
+
+                if let Some(data) = data {
+                    let err_len = data.len();
+
+                    if curr + err_len < buf.len() {
+                        buf[curr..curr + err_len].copy_from_slice(&data[..]);
+
+                        curr += err_len;
+                    } else {
+                        return Err(XactResultCodecEncodeError::TooShort)
+                    }
+                }
+
+                Ok(curr)
+
+            }
+        }
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<(XactResult<H::HashID, Vec<u8>, Vec<u8>>, usize),
+                Self::DecodeError>
+    {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactResultCodecDecodeError::Header {
+                err: err
+            })?;
+        let hash = self.hash.wrap_hashed_bytes(&header.hash)
+            .map_err(|err| XactResultCodecDecodeError::Hash {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        match &header.value {
+            XactResultValueHeader::Ok(XactValueHeader { len }) => {
+                let len = *len as usize;
+
+                if curr + len <= buf.len() {
+                    let res = buf[curr..curr + len].to_vec();
+
+                    curr += len;
+
+                    let res = XactResult {
+                        hash: hash,
+                        res: Ok(res)
+                    };
+
+                    Ok((res, curr))
+                } else {
+                    Err(XactResultCodecDecodeError::TooShort)
+                }
+            }
+            XactResultValueHeader::Error(XactErrorHeader { len }) => {
+                let len = *len as usize;
+
+                if curr + len <= buf.len() {
+                    let err = buf[curr..curr + len].to_vec();
+
+                    curr += len;
+
+                    let res = XactResult {
+                        hash: hash,
+                        res: Err(XactError::Error {
+                            err: err
+                        })
+                    };
+
+                    Ok((res, curr))
+                } else {
+                    Err(XactResultCodecDecodeError::TooShort)
+                }
+            }
+            XactResultValueHeader::UnknownClass(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownClass),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::UnknownVersion(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownVersion),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::UnknownInstance(_) => {
+                let res = XactResult {
+                    res: Err(XactError::UnknownInstance),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::InvalidPayload(_) => {
+                let res = XactResult {
+                    res: Err(XactError::InvalidPayload),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::InvalidEffect(_) => {
+                let res = XactResult {
+                    res: Err(XactError::InvalidEffect),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::EffectViolation(_) => {
+                let res = XactResult {
+                    res: Err(XactError::EffectViolation),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Unauthorized(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Unauthorized),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Internal(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Internal),
+                    hash: hash,
+                };
+
+                Ok((res, curr))
+            }
+        }
+    }
+}
+
+impl<RoundID, H, Seal, Payload, Effect, Res, Err,
+     SealCodec, PayloadCodec, EffectCodec, ResCodec, ErrCodec>
+    Codec<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchCodec<RoundID, H, Seal, Payload, Effect, Res, Err,
+                       SealCodec, PayloadCodec, EffectCodec,
+                       ResCodec, ErrCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Codec<Payload>,
+    PayloadCodec::Param: Clone,
+    EffectCodec: Codec<Effect>,
+    EffectCodec::Param: Clone,
+    SealCodec: Codec<Seal>,
+    SealCodec::Param: Clone,
+    ResCodec: Codec<Res>,
+    ResCodec::Param: Clone,
+    ErrCodec: Codec<Err>,
+    ErrCodec::Param: Clone,
+{
+    type CreateError = XactBatchCodecCreateError<
+        XactSealedCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                PayloadCodec::CreateError,
+                EffectCodec::CreateError,
+            >
+        >,
+        XactCommittedRoundCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                PayloadCodec::CreateError,
+                EffectCodec::CreateError
+            >
+        >,
+        XactResultCodecCreateError<
+            ResCodec::CreateError,
+            ErrCodec::CreateError,
+        >,
+    >;
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactResultCodecDecodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::DecodeError,
+            ResCodec::DecodeError,
+            ErrCodec::DecodeError,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError
+    >;
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactResultCodecEncodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::EncodeError,
+            ResCodec::EncodeError,
+            ErrCodec::EncodeError,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError
+    >;
+    type Param = (SealCodec::Param, PayloadCodec::Param, EffectCodec::Param,
+                  ResCodec::Param, ErrCodec::Param);
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let (seal, payload, effect, res, err) = param;
+        let req_codec = XactSealedCodec::create((seal.clone(),
+                                                 (payload.clone(),
+                                                  effect.clone())))
+            .map_err(|err| XactBatchCodecCreateError::Req {
+                err: err
+            })?;
+        let committed_codec = XactCommittedRoundCodec::create((seal.clone(),
+                                                               payload.clone(),
+                                                               effect.clone()))
+            .map_err(|err| XactBatchCodecCreateError::Committed {
+                err: err
+            })?;
+        let res_codec = XactResultCodec::create((res.clone(), err.clone()))
+            .map_err(|err| XactBatchCodecCreateError::Res {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactBatchCodec {
+            header_codec: XactBatchHeaderPERCodec::default(),
+            notify_codec: XactNotifyHeaderPERCodec::default(),
+            committed_codec: committed_codec,
+            req_codec: req_codec,
+            res_codec: res_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+    ) -> usize {
+        let req: usize = val.reqs.iter()
+            .map(|req| self.req_codec.buf_size(req)).sum();
+        let committed: usize = val.committed.iter()
+            .map(|committed| self.committed_codec.buf_size(committed))
+            .sum();
+        let res: usize = val.results.iter()
+            .map(|res| self.res_codec.buf_size(res)).sum();
+        let notify: usize = val.notifies.iter()
+            .map(|_| XactNotifyHeaderPERCodec::MAX_BYTES).sum();
+
+        req + committed + res + notify + 12
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let header = XactBatchHeader {
+            ncommitted: val.committed.len() as u32,
+            nreqs: val.reqs.len() as u32,
+            nresults: val.results.len() as u32,
+            nnotifies: val.notifies.len() as u32,
+        };
+        let mut curr = 0;
+
+        curr += self
+            .header_codec
+            .encode(&header, &mut buf[curr..])
+            .map_err(|err| XactBatchCodecEncodeError::Header {
+                err: err
+            })?;
+
+        for committed in val.committed.iter() {
+            curr += self
+                .committed_codec
+                .encode(&committed, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Committed {
+                    err: err
+                })?;
+        }
+
+        for req in val.reqs.iter() {
+            curr += self
+                .req_codec
+                .encode(&req, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Req {
+                    err: err
+                })?;
+        }
+
+        for result in val.results.iter() {
+            curr += self
+                .res_codec
+                .encode(&result, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Res {
+                    err: err
+                })?;
+        }
+
+        for notify in val.notifies.iter() {
+            let hash = notify.hash.bytes().to_vec();
+            let state = (&notify.state).into();
+            let notify = XactNotifyHeader {
+                hash: hash,
+                state: state
+            };
+
+            curr += self
+                .notify_codec
+                .encode(&notify, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Notify {
+                    err: err
+                })?;
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+            (XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+             usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactBatchCodecDecodeError::Header {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let mut committed = Vec::with_capacity(header.ncommitted as usize);
+
+        for _ in 0..header.ncommitted {
+            let (round, nbytes) = self
+                .committed_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Committed {
+                    err: err
+                })?;
+
+            committed.push(round);
+            curr += nbytes;
+        }
 
 
+        let mut reqs = Vec::with_capacity(header.nreqs as usize);
+
+        for _ in 0..header.nreqs {
+            let (req, nbytes) = self
+                .req_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Req {
+                    err: err
+                })?;
+
+            reqs.push(req);
+            curr += nbytes;
+        }
+
+        let mut results = Vec::with_capacity(header.nresults as usize);
+
+        for _ in 0..header.nresults {
+            let (res, nbytes) = self
+                .res_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Res {
+                    err: err
+                })?;
+
+            results.push(res);
+            curr += nbytes;
+        }
+
+        let mut notifies = Vec::with_capacity(header.nnotifies as usize);
+
+        for _ in 0..header.nnotifies {
+            let (notify, nbytes) = self
+                .notify_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Notify {
+                    err: err
+                })?;
+            let hash = self.hash.wrap_hashed_bytes(&notify.hash)
+                .map_err(|err| XactBatchCodecDecodeError::Hash {
+                    err: err
+                })?;
+            let state = notify.state.try_into()
+                .map_err(|err| XactBatchCodecDecodeError::State {
+                    err: err
+                })?;
+            let notify = XactNotify {
+                hash: hash,
+                state: state
+            };
+
+            notifies.push(notify);
+            curr += nbytes;
+        }
+
+        Ok((XactBatch {
+            committed: committed,
+            reqs: reqs,
+            notifies: notifies,
+            results: results
+        }, curr))
+    }
+}
+
+impl<RoundID, H, Seal, Payload, Effect, Res, Err,
+     SealCodec, PayloadCodec, EffectCodec, ResCodec, ErrCodec>
+    Codec<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchHashCodec<RoundID, H, Seal, Payload, Effect, Res, Err,
+                           SealCodec, PayloadCodec, EffectCodec,
+                           ResCodec, ErrCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Codec<Payload>,
+    PayloadCodec::Param: Clone,
+    EffectCodec: Codec<Effect>,
+    EffectCodec::Param: Clone,
+    SealCodec: Codec<Seal>,
+    SealCodec::Param: Clone,
+    ResCodec: Codec<Res>,
+    ResCodec::Param: Clone,
+    ErrCodec: Codec<Err>,
+    ErrCodec::Param: Clone,
+{
+    type CreateError = XactBatchCodecCreateError<
+        XactSealedCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                PayloadCodec::CreateError,
+                EffectCodec::CreateError,
+            >
+        >,
+        XactCommittedRoundCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                PayloadCodec::CreateError,
+                EffectCodec::CreateError
+            >
+        >,
+        XactResultCodecCreateError<
+            ResCodec::CreateError,
+            ErrCodec::CreateError,
+        >,
+    >;
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactResultCodecDecodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::DecodeError,
+            ResCodec::DecodeError,
+            ErrCodec::DecodeError,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError
+    >;
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactResultCodecEncodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::EncodeError,
+            ResCodec::EncodeError,
+            ErrCodec::EncodeError,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError
+    >;
+    type Param = (SealCodec::Param, PayloadCodec::Param, EffectCodec::Param,
+                  ResCodec::Param, ErrCodec::Param);
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let (seal, payload, effect, res, err) = param;
+        let req_codec = XactSealedCodec::create((seal.clone(),
+                                                 (payload.clone(),
+                                                  effect.clone())))
+            .map_err(|err| XactBatchCodecCreateError::Req {
+                err: err
+            })?;
+        let committed_codec = XactCommittedRoundCodec::create((seal.clone(),
+                                                               payload.clone(),
+                                                               effect.clone()))
+            .map_err(|err| XactBatchCodecCreateError::Committed {
+                err: err
+            })?;
+        let res_codec = XactResultCodec::create((res.clone(), err.clone()))
+            .map_err(|err| XactBatchCodecCreateError::Res {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactBatchHashCodec {
+            header_codec: XactBatchHeaderPERCodec::default(),
+            notify_codec: XactNotifyHeaderPERCodec::default(),
+            committed_codec: committed_codec,
+            req_codec: req_codec,
+            res_codec: res_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+    ) -> usize {
+        let req: usize = val.reqs.iter()
+            .map(|req| self.req_codec.buf_size(req)).sum();
+        let committed: usize = val.committed.iter()
+            .map(|committed| self.committed_codec.buf_size(committed))
+            .sum();
+        let res: usize = val.results.iter()
+            .map(|res| self.res_codec.buf_size(res)).sum();
+        let notify: usize = val.notifies.iter()
+            .map(|_| XactBatchHeaderPERCodec::MAX_BYTES).sum();
+
+        req + committed + res + notify + 12
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let header = XactBatchHeader {
+            ncommitted: val.committed.len() as u32,
+            nreqs: val.reqs.len() as u32,
+            nresults: val.results.len() as u32,
+            nnotifies: val.notifies.len() as u32,
+        };
+        let mut curr = 0;
+
+        curr += self
+            .header_codec
+            .encode(&header, &mut buf[curr..])
+            .map_err(|err| XactBatchCodecEncodeError::Header {
+                err: err
+            })?;
+
+        for committed in val.committed.iter() {
+            curr += self
+                .committed_codec
+                .encode(&committed, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Committed {
+                    err: err
+                })?;
+        }
+
+        for req in val.reqs.iter() {
+            curr += self
+                .req_codec
+                .encode(&req, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Req {
+                    err: err
+                })?;
+        }
+
+        for result in val.results.iter() {
+            curr += self
+                .res_codec
+                .encode(&result, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Res {
+                    err: err
+                })?;
+        }
+
+        for notify in val.notifies.iter() {
+            let hash = notify.hash.bytes().to_vec();
+            let state = (&notify.state).into();
+            let notify = XactNotifyHeader {
+                hash: hash,
+                state: state
+            };
+
+            curr += self
+                .notify_codec
+                .encode(&notify, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Notify {
+                    err: err
+                })?;
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+            (XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>,
+             usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactBatchCodecDecodeError::Header {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let mut committed = Vec::with_capacity(header.ncommitted as usize);
+
+        for _ in 0..header.ncommitted {
+            let (round, nbytes) = self
+                .committed_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Committed {
+                    err: err
+                })?;
+
+            committed.push(round);
+            curr += nbytes;
+        }
+
+
+        let mut reqs = Vec::with_capacity(header.nreqs as usize);
+
+        for _ in 0..header.nreqs {
+            let (req, nbytes) = self
+                .req_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Req {
+                    err: err
+                })?;
+
+            reqs.push(req);
+            curr += nbytes;
+        }
+
+        let mut results = Vec::with_capacity(header.nresults as usize);
+
+        for _ in 0..header.nresults {
+            let (res, nbytes) = self
+                .res_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Res {
+                    err: err
+                })?;
+
+            results.push(res);
+            curr += nbytes;
+        }
+
+        let mut notifies = Vec::with_capacity(header.nnotifies as usize);
+
+        for _ in 0..header.nnotifies {
+            let (notify, nbytes) = self
+                .notify_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Notify {
+                    err: err
+                })?;
+            let hash = self.hash.wrap_hashed_bytes(&notify.hash)
+                .map_err(|err| XactBatchCodecDecodeError::Hash {
+                    err: err
+                })?;
+            let state = notify.state.try_into()
+                .map_err(|err| XactBatchCodecDecodeError::State {
+                    err: err
+                })?;
+            let notify = XactNotify {
+                hash: hash,
+                state: state
+            };
+
+            notifies.push(notify);
+            curr += nbytes;
+        }
+
+        Ok((XactHashBatch {
+            committed: committed,
+            reqs: reqs,
+            notifies: notifies,
+            results: results
+        }, curr))
+    }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Codec<XactHashBatch<RoundID, H::HashID, Seal,
+                        Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>>>
+    for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Codec<Seal>,
+    SealCodec::Param: Clone,
+{
+    type CreateError = XactBatchCodecCreateError<
+        XactSealedCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                Infallible,
+                Infallible
+            >
+        >,
+        XactCommittedRoundCodecCreateError<
+            SealCodec::CreateError,
+            XactReqCodecCreateError<
+                Infallible,
+                Infallible
+            >
+        >,
+        XactResultCodecCreateError<
+            Infallible,
+            Infallible
+        >,
+    >;
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                Infallible,
+                Infallible,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::DecodeError
+            >
+        >,
+        XactResultCodecDecodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::DecodeError,
+            Infallible,
+            Infallible,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError
+    >;
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                Infallible,
+                Infallible,
+                <XactUncommittedReqHeaderPERCodec as Codec<XactUncommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Codec<XactCommittedRoundHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Codec<XactCommittedReqHeader>>::EncodeError
+            >
+        >,
+        XactResultCodecEncodeError<
+            <XactResultHeaderPERCodec as Codec<XactResultHeader>>::EncodeError,
+            Infallible,
+            Infallible,
+        >,
+        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError
+    >;
+    type Param = SealCodec::Param;
+
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let req_codec = XactSealedCodec::create((param.clone(), ()))
+            .map_err(|err| XactBatchCodecCreateError::Req {
+                err: err
+            })?;
+        let committed_codec = XactCommittedRoundBlobCodec::create(param.clone())
+            .map_err(|err| XactBatchCodecCreateError::Committed {
+                err: err
+            })?;
+        let res_codec = XactResultBlobCodec::create(())
+            .map_err(|err| XactBatchCodecCreateError::Res {
+                err: err
+            })?;
+        let hash = H::default();
+
+        Ok(XactBatchBlobCodec {
+            header_codec: XactBatchHeaderPERCodec::default(),
+            notify_codec: XactNotifyHeaderPERCodec::default(),
+            committed_codec: committed_codec,
+            req_codec: req_codec,
+            res_codec: res_codec,
+            hash: hash
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &XactHashBatch<RoundID, H::HashID, Seal,
+                            Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>>,
+    ) -> usize {
+        let req: usize = val.reqs.iter()
+            .map(|req| self.req_codec.buf_size(req)).sum();
+        let committed: usize = val.committed.iter()
+            .map(|committed| self.committed_codec.buf_size(committed))
+            .sum();
+        let res: usize = val.results.iter()
+            .map(|res| self.res_codec.buf_size(res)).sum();
+        let notify: usize = val.notifies.iter()
+            .map(|_| XactBatchHeaderPERCodec::MAX_BYTES).sum();
+
+        req + committed + res + notify + 12
+    }
+
+    fn encode(
+        &mut self,
+        val: &XactHashBatch<RoundID, H::HashID, Seal,
+                            Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        let header = XactBatchHeader {
+            ncommitted: val.committed.len() as u32,
+            nreqs: val.reqs.len() as u32,
+            nresults: val.results.len() as u32,
+            nnotifies: val.notifies.len() as u32,
+        };
+        let mut curr = 0;
+
+        curr += self
+            .header_codec
+            .encode(&header, &mut buf[curr..])
+            .map_err(|err| XactBatchCodecEncodeError::Header {
+                err: err
+            })?;
+
+        for committed in val.committed.iter() {
+            curr += self
+                .committed_codec
+                .encode(&committed, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Committed {
+                    err: err
+                })?;
+        }
+
+        for req in val.reqs.iter() {
+            curr += self
+                .req_codec
+                .encode(&req, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Req {
+                    err: err
+                })?;
+        }
+
+        for result in val.results.iter() {
+            curr += self
+                .res_codec
+                .encode(&result, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Res {
+                    err: err
+                })?;
+        }
+
+        for notify in val.notifies.iter() {
+            let hash = notify.hash.bytes().to_vec();
+            let state = (&notify.state).into();
+            let notify = XactNotifyHeader {
+                hash: hash,
+                state: state
+            };
+
+            curr += self
+                .notify_codec
+                .encode(&notify, &mut buf[curr..])
+                .map_err(|err| XactBatchCodecEncodeError::Notify {
+                    err: err
+                })?;
+        }
+
+        Ok(curr)
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+            (XactHashBatch<RoundID, H::HashID, Seal,
+                           Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>>,
+             usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| XactBatchCodecDecodeError::Header {
+                err: err
+            })?;
+
+        curr += nbytes;
+
+        let mut committed = Vec::with_capacity(header.ncommitted as usize);
+
+        for _ in 0..header.ncommitted {
+            let (round, nbytes) = self
+                .committed_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Committed {
+                    err: err
+                })?;
+
+            committed.push(round);
+            curr += nbytes;
+        }
+
+
+        let mut reqs = Vec::with_capacity(header.nreqs as usize);
+
+        for _ in 0..header.nreqs {
+            let (req, nbytes) = self
+                .req_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Req {
+                    err: err
+                })?;
+
+            reqs.push(req);
+            curr += nbytes;
+        }
+
+        let mut results = Vec::with_capacity(header.nresults as usize);
+
+        for _ in 0..header.nresults {
+            let (res, nbytes) = self
+                .res_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Res {
+                    err: err
+                })?;
+
+            results.push(res);
+            curr += nbytes;
+        }
+
+        let mut notifies = Vec::with_capacity(header.nnotifies as usize);
+
+        for _ in 0..header.nnotifies {
+            let (notify, nbytes) = self
+                .notify_codec
+                .decode(&buf[curr..])
+                .map_err(|err| XactBatchCodecDecodeError::Notify {
+                    err: err
+                })?;
+            let hash = self.hash.wrap_hashed_bytes(&notify.hash)
+                .map_err(|err| XactBatchCodecDecodeError::Hash {
+                    err: err
+                })?;
+            let state = notify.state.try_into()
+                .map_err(|err| XactBatchCodecDecodeError::State {
+                    err: err
+                })?;
+            let notify = XactNotify {
+                hash: hash,
+                state: state
+            };
+
+            notifies.push(notify);
+            curr += nbytes;
+        }
+
+        Ok((XactHashBatch {
+            committed: committed,
+            reqs: reqs,
+            notifies: notifies,
+            results: results
+        }, curr))
+    }
+}
+
+
+impl<Err> Display for XactError<Err>
+where Err: Display {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactError::Error { err } => err.fmt(f),
+            XactError::UnknownClass => write!(f, "unknown transaction class"),
+            XactError::UnknownVersion =>
+                write!(f, "unsupported version of transaction class"),
+            XactError::UnknownInstance =>
+                write!(f, "unknown instance of transaction class"),
+            XactError::InvalidPayload =>
+                write!(f, "error parsing transaction request"),
+            XactError::InvalidEffect =>
+                write!(f, "error parsing effects constraint"),
+            XactError::EffectViolation =>
+                write!(f, "violated effects constraint"),
+            XactError::Unauthorized =>
+                write!(f, "transaction request was unauthorization"),
+            XactError::Internal =>
+                write!(f, "internal error processing transaction request"),
+        }
+    }
+}
 
 impl<RoundID> Display for XactLinPoint<RoundID>
 where RoundID: Clone + Display + From<u128> + Into<u128> {
@@ -1538,6 +4555,35 @@ where RoundID: Clone + Display + From<u128> + Into<u128>,
             XactEffects::HardNone { when: None } => write!(f, "hard none"),
             XactEffects::SoftNone => write!(f, "soft none")
         }
+    }
+}
+
+impl<RoundID> Display for XactNotifyState<RoundID>
+where RoundID: Clone + Display + From<u128> + Into<u128> {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactNotifyState::Accept => write!(f, "accepted"),
+            XactNotifyState::Consensus => write!(f, "submitted to consensus"),
+            XactNotifyState::Commit { when } =>
+                write!(f, "committed at {}", when),
+            XactNotifyState::Dispatch => write!(f, "dispatched to processor"),
+            XactNotifyState::Complete { when } =>
+                write!(f, "completed at {}", when),
+        }
+    }
+}
+
+impl<RoundID, H> Display for XactNotify<RoundID, H>
+where RoundID: Clone + Display + From<u128> + Into<u128>,
+      H: Display + HashID {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        write!(f, "{}: {}", self.hash, self.state)
     }
 }
 
@@ -1588,9 +4634,196 @@ where
             XactReqCodecEncodeError::Payload { err } => err.scope(),
             XactReqCodecEncodeError::Effects { err } => err.scope(),
             XactReqCodecEncodeError::Req { .. } |
-            XactReqCodecEncodeError::Hash { .. } |
             XactReqCodecEncodeError::TooShort =>
                 ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Seal, Inner> ScopedError for XactSealedCodecCreateError<Seal, Inner>
+where
+    Seal: ScopedError,
+    Inner: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactSealedCodecCreateError::Seal { err } => err.scope(),
+            XactSealedCodecCreateError::Inner { err } => err.scope()
+        }
+    }
+}
+
+impl<Header, Seal, Inner> ScopedError
+    for XactSealedCodecError<Header, Seal, Inner>
+where
+    Header: ScopedError,
+    Seal: ScopedError,
+    Inner: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactSealedCodecError::Header { err } => err.scope(),
+            XactSealedCodecError::Seal { err } => err.scope(),
+            XactSealedCodecError::Inner { err } => err.scope(),
+            XactSealedCodecError::TooShort => ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Seal, Req> ScopedError
+    for XactCommittedRoundCodecCreateError<Seal, Req>
+where
+    Seal: ScopedError,
+    Req: ScopedError,
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactCommittedRoundCodecCreateError::Seal { err } => err.scope(),
+            XactCommittedRoundCodecCreateError::Req { err } => err.scope(),
+        }
+    }
+}
+
+impl<Header, Seal, Req> ScopedError
+    for XactCommittedRoundCodecEncodeError<Header, Seal, Req>
+where
+    Header: ScopedError,
+    Seal: ScopedError,
+    Req: ScopedError,
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactCommittedRoundCodecEncodeError::Header { err } => err.scope(),
+            XactCommittedRoundCodecEncodeError::Seal { err } => err.scope(),
+            XactCommittedRoundCodecEncodeError::Req { err } => err.scope(),
+            XactCommittedRoundCodecEncodeError::TooShort =>
+                ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Header, Seal, Req> ScopedError
+    for XactCommittedRoundCodecDecodeError<Header, Seal, Req>
+where
+    Header: ScopedError,
+    Seal: ScopedError,
+    Req: ScopedError,
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactCommittedRoundCodecDecodeError::Header { err } => err.scope(),
+            XactCommittedRoundCodecDecodeError::Seal { err } => err.scope(),
+            XactCommittedRoundCodecDecodeError::Req { err } => err.scope(),
+            XactCommittedRoundCodecDecodeError::Round { .. } |
+            XactCommittedRoundCodecDecodeError::Hash { .. } |
+            XactCommittedRoundCodecDecodeError::TooShort =>
+                ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Res, Err> ScopedError for XactResultCodecCreateError<Res, Err>
+where
+    Res: ScopedError,
+    Err: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactResultCodecCreateError::Res { err } => err.scope(),
+            XactResultCodecCreateError::Err { err } => err.scope()
+        }
+    }
+}
+
+impl<Header, Res, Err> ScopedError
+    for XactResultCodecEncodeError<Header, Res, Err>
+where
+    Header: ScopedError,
+    Res: ScopedError,
+    Err: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactResultCodecEncodeError::Header { err } => err.scope(),
+            XactResultCodecEncodeError::Res { err } => err.scope(),
+            XactResultCodecEncodeError::Err { err } => err.scope(),
+            XactResultCodecEncodeError::TooShort => ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Header, Res, Err> ScopedError
+    for XactResultCodecDecodeError<Header, Res, Err>
+where
+    Header: ScopedError,
+    Res: ScopedError,
+    Err: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactResultCodecDecodeError::Header { err } => err.scope(),
+            XactResultCodecDecodeError::Res { err } => err.scope(),
+            XactResultCodecDecodeError::Err { err } => err.scope(),
+            XactResultCodecDecodeError::Hash { .. } |
+            XactResultCodecDecodeError::TooShort => ErrorScope::Unrecoverable
+        }
+    }
+}
+
+impl<Req, Committed, Res> ScopedError
+    for XactBatchCodecCreateError<Req, Committed, Res>
+where
+    Req: ScopedError,
+    Committed: ScopedError,
+    Res: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactBatchCodecCreateError::Req { err } => err.scope(),
+            XactBatchCodecCreateError::Committed { err } => err.scope(),
+            XactBatchCodecCreateError::Res { err } => err.scope(),
+        }
+    }
+}
+
+impl<Header, Req, Committed, Res, Notify> ScopedError
+    for XactBatchCodecEncodeError<Header, Req, Committed, Res, Notify>
+where
+    Header: ScopedError,
+    Req: ScopedError,
+    Committed: ScopedError,
+    Res: ScopedError,
+    Notify: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactBatchCodecEncodeError::Header { err } => err.scope(),
+            XactBatchCodecEncodeError::Req { err } => err.scope(),
+            XactBatchCodecEncodeError::Committed { err } => err.scope(),
+            XactBatchCodecEncodeError::Res { err } => err.scope(),
+            XactBatchCodecEncodeError::Notify { err } => err.scope(),
+        }
+    }
+}
+
+impl<Header, Req, Committed, Res, Notify> ScopedError
+    for XactBatchCodecDecodeError<Header, Req, Committed, Res, Notify>
+where
+    Header: ScopedError,
+    Req: ScopedError,
+    Committed: ScopedError,
+    Res: ScopedError,
+    Notify: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            XactBatchCodecDecodeError::Header { err } => err.scope(),
+            XactBatchCodecDecodeError::Req { err } => err.scope(),
+            XactBatchCodecDecodeError::Committed { err } => err.scope(),
+            XactBatchCodecDecodeError::Res { err } => err.scope(),
+            XactBatchCodecDecodeError::Notify { err } => err.scope(),
+            XactBatchCodecDecodeError::State { .. } |
+            XactBatchCodecDecodeError::Hash { .. } => ErrorScope::Unrecoverable
         }
     }
 }
@@ -1650,7 +4883,6 @@ where
             XactReqCodecEncodeError::Payload { err } => err.fmt(f),
             XactReqCodecEncodeError::Effects { err } => err.fmt(f),
             XactReqCodecEncodeError::Req { err } => err.fmt(f),
-            XactReqCodecEncodeError::Hash { err } => err.fmt(f),
             XactReqCodecEncodeError::TooShort => {
                 write!(f, "input buffer is too short")
             }
@@ -1658,9 +4890,231 @@ where
     }
 }
 
+impl<Seal, Inner> Display for XactSealedCodecCreateError<Seal, Inner>
+where
+    Seal: Display,
+    Inner: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactSealedCodecCreateError::Seal { err } => err.fmt(f),
+            XactSealedCodecCreateError::Inner { err } => err.fmt(f)
+        }
+    }
+}
 
-#[cfg(test)]
-use constellation_common::codec::DatagramCodec;
+impl<Header, Seal, Inner> Display for XactSealedCodecError<Header, Seal, Inner>
+where
+    Header: Display,
+    Seal: Display,
+    Inner: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactSealedCodecError::Header { err } => err.fmt(f),
+            XactSealedCodecError::Seal { err } => err.fmt(f),
+            XactSealedCodecError::Inner { err } => err.fmt(f),
+            XactSealedCodecError::TooShort => {
+                write!(f, "input buffer is too short")
+            }
+        }
+    }
+}
+
+impl<Seal, Req> Display for XactCommittedRoundCodecCreateError<Seal, Req>
+where
+    Seal: Display,
+    Req: Display,
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactCommittedRoundCodecCreateError::Seal { err } => err.fmt(f),
+            XactCommittedRoundCodecCreateError::Req { err } => err.fmt(f),
+        }
+    }
+}
+
+impl<Header, Seal, Req> Display
+    for XactCommittedRoundCodecEncodeError<Header, Seal, Req>
+where
+    Header: Display,
+    Seal: Display,
+    Req: Display,
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactCommittedRoundCodecEncodeError::Header { err } => err.fmt(f),
+            XactCommittedRoundCodecEncodeError::Seal { err } => err.fmt(f),
+            XactCommittedRoundCodecEncodeError::Req { err } => err.fmt(f),
+            XactCommittedRoundCodecEncodeError::TooShort => {
+                write!(f, "input buffer is too short")
+            }
+        }
+    }
+}
+
+impl<Header, Seal, Req> Display
+    for XactCommittedRoundCodecDecodeError<Header, Seal, Req>
+where
+    Header: Display,
+    Seal: Display,
+    Req: Display,
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactCommittedRoundCodecDecodeError::Header { err } => err.fmt(f),
+            XactCommittedRoundCodecDecodeError::Seal { err } => err.fmt(f),
+            XactCommittedRoundCodecDecodeError::Req { err } => err.fmt(f),
+            XactCommittedRoundCodecDecodeError::Hash { err } => err.fmt(f),
+            XactCommittedRoundCodecDecodeError::Round { .. } =>
+                write!(f, "error converting round from bytes"),
+            XactCommittedRoundCodecDecodeError::TooShort => {
+                write!(f, "input buffer is too short")
+            }
+        }
+    }
+}
+
+impl<Res, Err> Display for XactResultCodecCreateError<Res, Err>
+where
+    Res: Display,
+    Err: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactResultCodecCreateError::Res { err } => err.fmt(f),
+            XactResultCodecCreateError::Err { err } => err.fmt(f)
+        }
+    }
+}
+
+impl<Header, Res, Err> Display for XactResultCodecEncodeError<Header, Res, Err>
+where
+    Header: Display,
+    Res: Display,
+    Err: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactResultCodecEncodeError::Header { err } => err.fmt(f),
+            XactResultCodecEncodeError::Res { err } => err.fmt(f),
+            XactResultCodecEncodeError::Err { err } => err.fmt(f),
+            XactResultCodecEncodeError::TooShort =>
+                write!(f, "buffer is too short")
+        }
+    }
+}
+
+impl<Header, Res, Err> Display for XactResultCodecDecodeError<Header, Res, Err>
+where
+    Header: Display,
+    Res: Display,
+    Err: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactResultCodecDecodeError::Header { err } => err.fmt(f),
+            XactResultCodecDecodeError::Hash { err } => err.fmt(f),
+            XactResultCodecDecodeError::Res { err } => err.fmt(f),
+            XactResultCodecDecodeError::Err { err } => err.fmt(f),
+            XactResultCodecDecodeError::TooShort =>
+                write!(f, "buffer is too short")
+        }
+    }
+}
+
+impl<Req, Committed, Res> Display
+    for XactBatchCodecCreateError<Req, Committed, Res>
+where
+    Req: Display,
+    Committed: Display,
+    Res: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactBatchCodecCreateError::Req { err } => err.fmt(f),
+            XactBatchCodecCreateError::Committed { err } => err.fmt(f),
+            XactBatchCodecCreateError::Res { err } => err.fmt(f),
+        }
+    }
+}
+
+impl<Header, Req, Committed, Res, Notify> Display
+    for XactBatchCodecEncodeError<Header, Req, Committed, Res, Notify>
+where
+    Header: Display,
+    Req: Display,
+    Committed: Display,
+    Res: Display,
+    Notify: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactBatchCodecEncodeError::Header { err } => err.fmt(f),
+            XactBatchCodecEncodeError::Req { err } => err.fmt(f),
+            XactBatchCodecEncodeError::Committed { err } => err.fmt(f),
+            XactBatchCodecEncodeError::Res { err } => err.fmt(f),
+            XactBatchCodecEncodeError::Notify { err } => err.fmt(f),
+        }
+    }
+}
+
+impl<Header, Req, Committed, Res, Notify> Display
+    for XactBatchCodecDecodeError<Header, Req, Committed, Res, Notify>
+where
+    Header: Display,
+    Req: Display,
+    Committed: Display,
+    Res: Display,
+    Notify: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactBatchCodecDecodeError::Header { err } => err.fmt(f),
+            XactBatchCodecDecodeError::Req { err } => err.fmt(f),
+            XactBatchCodecDecodeError::Committed { err } => err.fmt(f),
+            XactBatchCodecDecodeError::Res { err } => err.fmt(f),
+            XactBatchCodecDecodeError::Notify { err } => err.fmt(f),
+            XactBatchCodecDecodeError::Hash { err } => err.fmt(f),
+            XactBatchCodecDecodeError::State { .. } =>
+                write!(f, "round ID length")
+        }
+    }
+}
+
 #[cfg(test)]
 use constellation_common::hashid::SHA3Algo;
 
@@ -1892,7 +5346,7 @@ fn test_uncommitted_req_header_hard_none_no_linpoint_no_instance() {
 fn test_uncommitted_req_header_hard_none_linpoint_no_instance() {
     let effects_header =
         XactUncommittedEffectsHeader::HardNone(XactHardNone {
-            when: Some(XactLinPointHeader {
+            when: Some(crate::generated::xact::XactLinPoint {
                 round: vec![0x88; 16],
                 idx: 0x7
             })
@@ -1935,7 +5389,7 @@ fn test_uncommitted_req_header_hard_none_no_linpoint_instance() {
 fn test_uncommitted_req_header_hard_none_linpoint_instance() {
     let effects_header =
         XactUncommittedEffectsHeader::HardNone(XactHardNone {
-            when: Some(XactLinPointHeader {
+            when: Some(crate::generated::xact::XactLinPoint {
                 round: vec![0x88; 16],
                 idx: 0x7
             })
@@ -2259,9 +5713,6 @@ fn test_uncommitted_req_hard_none_linpoint_instance() {
     assert_eq!(req, decoded);
 }
 
-
-
-
 #[test]
 fn test_uncommitted_req_soft_none_no_linpoint_no_instance() {
     let uuid = Uuid::new_v5(
@@ -2330,7 +5781,7 @@ fn test_uncommitted_req_hard_effects_no_instance_blob() {
         effects: vec![2, 1, 0],
         hard: true
     };
-    let mut codec: XactUncommittedReqBlobCodec<SHA3Algo, u128> =
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
         XactUncommittedReqBlobCodec::create(())
         .expect("Expected success");
     let hash = codec.hash.wrap_hashed_bytes(
@@ -2670,7 +6121,7 @@ fn test_uncommitted_req_hard_effects_no_instance_hash() {
         },
         hard: true
     };
-    let mut codec: XactUncommittedReqHashCodec<SHA3Algo, u128, _, _,
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
                                                TestPayloadCodec,
                                                TestEffectsCodec> =
         XactUncommittedReqHashCodec::create(((), ()))
@@ -2703,10 +6154,93 @@ fn test_uncommitted_req_hard_effects_no_instance_hash() {
     assert_eq!(req, decoded);
 }
 
+#[test]
+fn test_seal_header() {
+    let header = XactSealHeader {
+        len: 0xaaaa5555aaaa5555,
+    };
+    let mut codec = XactSealHeaderPERCodec::default();
+    let mut buf = [0; XactSealHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
 
+    assert_eq!(header, decoded);
+}
 
+#[test]
+fn test_sealed_uncommitted_req() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: None
+    };
+    let sealed = XactSealed {
+        inner: XactUncommittedReq {
+            version: Version::new(1, 2, 3),
+            class: uuid,
+            effects: effects_header,
+            instance: Some(0x1234567890abcdef),
+            payload: TestPayload {
+                effects: vec![0, 1, 2, 3, 4, 5]
+            }
+        },
+        seal: TestPayload {
+            effects: vec![6, 7, 8, 9, 0]
+        }
+    };
+    let mut codec: XactSealedCodec<
+        _, _,
+        TestPayloadCodec,
+        XactUncommittedReqCodec<u128, _, _,
+                                TestPayloadCodec,
+                                TestEffectsCodec>,
+    > = XactSealedCodec::create(((), ((), ())))
+        .expect("Expected success");
+    let len = codec.buf_size(&sealed);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&sealed, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
 
+    assert_eq!(sealed, decoded);
+}
 
+#[test]
+fn test_sealed_uncommitted_req_blob() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: None
+    };
+    let sealed = XactSealed {
+        inner: XactUncommittedReq {
+            version: Version::new(1, 2, 3),
+            class: uuid,
+            effects: effects_header,
+            instance: Some(0x1234567890abcdef),
+            payload: TestPayload {
+                effects: vec![0, 1, 2, 3, 4, 5]
+            }
+        },
+        seal: vec![6, 7, 8, 9, 0]
+    };
+    let mut codec: XactSealedBlobCodec<
+        _,
+        XactUncommittedReqCodec<u128, _, _,
+                                TestPayloadCodec,
+                                TestEffectsCodec>,
+    > = XactSealedBlobCodec::create(((), ()))
+        .expect("Expected success");
+    let len = codec.buf_size(&sealed);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&sealed, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(sealed, decoded);
+}
 
 #[test]
 fn test_committed_req_header_no_effects_no_instance() {
@@ -3016,4 +6550,1079 @@ fn test_committed_effects_instance_blob() {
     let (decoded, _) = codec.decode(&buf).expect("Expected success");
 
     assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_committed_round_header_no_seal() {
+    let header = XactCommittedRoundHeader {
+        round: vec![0x11; 16],
+        seal: None,
+        nreqs: 0xf
+    };
+    let mut codec = XactCommittedRoundHeaderPERCodec::default();
+    let mut buf = [0; XactCommittedRoundHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_committed_round_header_seal() {
+    let header = XactCommittedRoundHeader {
+        round: vec![0x11; 16],
+        seal: Some(XactConsensusSealHeader {
+            hashes: vec![
+                vec![0x00; 64], vec![0x11; 64],
+                vec![0x22; 64], vec![0x33; 64],
+                vec![0x44; 64], vec![0x55; 64],
+                vec![0x66; 64], vec![0x77; 64],
+                vec![0x88; 64], vec![0x99; 64],
+                vec![0xaa; 64], vec![0xbb; 64],
+                vec![0xcc; 64], vec![0xdd; 64],
+                vec![0xee; 64], vec![0xff; 64]
+            ],
+            nseals: 0x1234567890abcdef
+        }),
+        nreqs: 0xf
+    };
+    let mut codec = XactCommittedRoundHeaderPERCodec::default();
+    let mut buf = [0; XactCommittedRoundHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_committed_round_no_seal() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let req = XactCommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: Some(XactCommittedEffects {
+            effects: TestEffects {
+                effects: vec![0, 1, 2]
+            },
+            hard: true
+        }),
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        },
+        idx: 0x0e
+    };
+    let header = XactCommittedRound {
+        round: 0x1234567890abcdef,
+        seal: None,
+        reqs: vec![req]
+    };
+    let mut codec: XactCommittedRoundCodec<_, SHA3Algo, _, _, _,
+                                           TestPayloadCodec,
+                                           TestPayloadCodec,
+                                           TestEffectsCodec> =
+        XactCommittedRoundCodec::create(((), (), ()))
+        .expect("Expected success");
+    let len = codec.buf_size(&header);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_committed_round_seal() {
+    let hash = SHA3Algo::default();
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let req = XactCommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: Some(XactCommittedEffects {
+            effects: TestEffects {
+                effects: vec![0, 1, 2]
+            },
+            hard: true
+        }),
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        },
+        idx: 0x0e
+    };
+    let header = XactCommittedRound {
+        round: 0x1234567890abcdef,
+        seal: Some(XactConsensusSeal {
+            hashes: vec![
+                hash.wrap_hashed_bytes(&[0x00; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x11; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x22; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x33; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x44; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x55; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x66; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x77; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x88; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x99; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xaa; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xbb; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xcc; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xdd; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xee; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xff; 64])
+                    .expect("Expected success")
+            ],
+            seals: vec![
+                TestPayload {
+                    effects: vec![0, 1, 2, 3, 4, 5]
+                },
+                TestPayload {
+                    effects: vec![6, 7, 8, 9]
+                }
+            ]
+        }),
+        reqs: vec![req]
+    };
+    let mut codec: XactCommittedRoundCodec<_, SHA3Algo, _, _, _,
+                                           TestPayloadCodec,
+                                           TestPayloadCodec,
+                                           TestEffectsCodec> =
+        XactCommittedRoundCodec::create(((), (), ()))
+        .expect("Expected success");
+    let len = codec.buf_size(&header);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_committed_round_no_seal_blob() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let req = XactCommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: Some(XactCommittedEffects {
+            effects: vec![0, 1, 2],
+            hard: true
+        }),
+        instance: Some(0x1234567890abcdef),
+        payload: vec![0, 1, 2, 3, 4, 5],
+        idx: 0x0e
+    };
+    let header = XactCommittedRound {
+        round: 0x1234567890abcdef,
+        seal: None,
+        reqs: vec![req]
+    };
+    let mut codec: XactCommittedRoundBlobCodec<_, SHA3Algo, _,
+                                               TestPayloadCodec> =
+        XactCommittedRoundBlobCodec::create(())
+        .expect("Expected success");
+    let len = codec.buf_size(&header);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_committed_round_seal_blob() {
+    let hash = SHA3Algo::default();
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let req = XactCommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: Some(XactCommittedEffects {
+            effects: vec![0, 1, 2],
+            hard: true
+        }),
+        instance: Some(0x1234567890abcdef),
+        payload: vec![0, 1, 2, 3, 4, 5],
+        idx: 0x0e
+    };
+    let header = XactCommittedRound {
+        round: 0x1234567890abcdef,
+        seal: Some(XactConsensusSeal {
+            hashes: vec![
+                hash.wrap_hashed_bytes(&[0x00; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x11; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x22; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x33; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x44; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x55; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x66; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x77; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x88; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0x99; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xaa; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xbb; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xcc; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xdd; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xee; 64])
+                    .expect("Expected success"),
+                hash.wrap_hashed_bytes(&[0xff; 64])
+                    .expect("Expected success")
+            ],
+            seals: vec![
+                TestPayload {
+                    effects: vec![0, 1, 2, 3, 4, 5]
+                },
+                TestPayload {
+                    effects: vec![6, 7, 8, 9]
+                }
+            ]
+        }),
+        reqs: vec![req]
+    };
+    let mut codec: XactCommittedRoundBlobCodec<_, SHA3Algo, _,
+                                               TestPayloadCodec> =
+        XactCommittedRoundBlobCodec::create(())
+        .expect("Expected success");
+    let len = codec.buf_size(&header);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_ok() {
+    let value = XactResultValueHeader::Ok(XactValueHeader {
+        len: 0x1234567890abcdef
+    });
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_error() {
+    let value = XactResultValueHeader::Error(XactErrorHeader {
+        len: 0x1234567890abcdef
+    });
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_unknown_class() {
+    let value = XactResultValueHeader::UnknownClass(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_unknown_version() {
+    let value = XactResultValueHeader::UnknownVersion(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_unknown_instance() {
+    let value = XactResultValueHeader::UnknownInstance(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_invalid_payload() {
+    let value = XactResultValueHeader::InvalidPayload(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_invalid_effect() {
+    let value = XactResultValueHeader::InvalidEffect(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_effect_violation() {
+    let value = XactResultValueHeader::EffectViolation(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_unauthorized() {
+    let value = XactResultValueHeader::Unauthorized(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_header_internal() {
+    let value = XactResultValueHeader::Internal(Default::default());
+    let header = XactResultHeader {
+        hash: vec![0x11; 64],
+        value: value
+    };
+    let mut codec = XactResultHeaderPERCodec::default();
+    let mut buf = [0; XactResultHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_result_ok() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Ok(TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_error() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Error {
+            err: TestPayload {
+                effects: vec![0, 1, 2, 3, 4, 5]
+            }
+        }),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_class() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownClass),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_version() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownVersion),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_instance() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownInstance),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_invalid_payload() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::InvalidPayload),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_invalid_effect() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::InvalidEffect),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_effect_violation() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::EffectViolation),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unauthorized() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Unauthorized),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_internal() {
+    let mut codec: XactResultCodec<SHA3Algo, _, _,
+                                   TestPayloadCodec,
+                                   TestPayloadCodec> =
+        XactResultCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Internal),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_ok_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Ok(vec![0, 1, 2, 3, 4, 5]),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_error_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Error {
+            err: vec![0, 1, 2, 3, 4, 5]
+        }),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_class_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownClass),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_version_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownVersion),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unknown_instance_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::UnknownInstance),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_invalid_payload_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::InvalidPayload),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_invalid_effect_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::InvalidEffect),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_effect_violation_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::EffectViolation),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_unauthorized_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Unauthorized),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_result_internal_blob() {
+    let mut codec: XactResultBlobCodec<SHA3Algo> =
+        XactResultBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(&[0; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Err(XactError::Internal),
+        hash: hash,
+    };
+    let len = codec.buf_size(&result);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&result, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(result, decoded);
+}
+
+#[test]
+fn test_notify_header_accept() {
+    let header = XactNotifyHeader {
+        hash: vec![0x11; 64],
+        state: XactNotifyStateHeader::Accept(Default::default())
+    };
+    let mut codec = XactNotifyHeaderPERCodec::default();
+    let mut buf = [0; XactNotifyHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_notify_header_consensus() {
+    let header = XactNotifyHeader {
+        hash: vec![0x11; 64],
+        state: XactNotifyStateHeader::Consensus(Default::default())
+    };
+    let mut codec = XactNotifyHeaderPERCodec::default();
+    let mut buf = [0; XactNotifyHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_notify_header_commit() {
+    let header = XactNotifyHeader {
+        hash: vec![0x11; 64],
+        state: XactNotifyStateHeader::Commit(
+            crate::generated::xact::XactCommitState {
+                when: crate::generated::xact::XactLinPoint {
+                    round: vec![0x88; 16],
+                    idx: 0x7
+                }
+            }
+        )
+    };
+    let mut codec = XactNotifyHeaderPERCodec::default();
+    let mut buf = [0; XactNotifyHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_notify_header_dispatch() {
+    let header = XactNotifyHeader {
+        hash: vec![0x11; 64],
+        state: XactNotifyStateHeader::Dispatch(Default::default())
+    };
+    let mut codec = XactNotifyHeaderPERCodec::default();
+    let mut buf = [0; XactNotifyHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_notify_header_complete() {
+    let header = XactNotifyHeader {
+        hash: vec![0x11; 64],
+        state: XactNotifyStateHeader::Complete(
+            crate::generated::xact::XactCommitState {
+                when: crate::generated::xact::XactLinPoint {
+                    round: vec![0x88; 16],
+                    idx: 0x7
+                }
+            }
+        )
+    };
+    let mut codec = XactNotifyHeaderPERCodec::default();
+    let mut buf = [0; XactNotifyHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_notify_header() {
+    let header = XactBatchHeader {
+        ncommitted: 0xffffff,
+        nreqs: 0xffffff,
+        nresults: 0xffffff,
+        nnotifies: 0xffffff,
+    };
+    let mut codec = XactBatchHeaderPERCodec::default();
+    let mut buf = [0; XactBatchHeaderPERCodec::MAX_BYTES];
+    let _ = codec.encode(&header, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(header, decoded);
+}
+
+#[test]
+fn test_batch() {
+    let mut codec: XactBatchCodec<_, SHA3Algo, _, _, _, _, _,
+                                  TestPayloadCodec,
+                                  TestPayloadCodec,
+                                  TestEffectsCodec,
+                                  TestPayloadCodec,
+                                  TestPayloadCodec>=
+        XactBatchCodec::create(((), (), (), (), ()))
+        .expect("Expected success");
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::Effects {
+        effects: TestEffects {
+            effects: vec![0, 1, 2]
+        },
+        hard: true
+    };
+    let req = XactUncommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let sealed = XactSealed {
+        seal: TestPayload {
+            effects: vec![0xa, 0xb, 0xc, 0xd]
+        },
+        inner: req
+    };
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let committed = XactCommittedReq {
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: Some(XactCommittedEffects {
+            effects: TestEffects {
+                effects: vec![0, 1, 2]
+            },
+            hard: true
+        }),
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        },
+        idx: 0x0e
+    };
+    let round = XactCommittedRound {
+        round: 0x1234567890abcdef,
+        seal: Some(XactConsensusSeal {
+            hashes: vec![
+                codec.hash.wrap_hashed_bytes(&[0x00; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x11; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x22; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x33; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x44; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x55; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x66; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x77; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x88; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0x99; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xaa; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xbb; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xcc; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xdd; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xee; 64])
+                    .expect("Expected success"),
+                codec.hash.wrap_hashed_bytes(&[0xff; 64])
+                    .expect("Expected success")
+            ],
+            seals: vec![
+                TestPayload {
+                    effects: vec![0, 1, 2, 3, 4, 5]
+                },
+                TestPayload {
+                    effects: vec![6, 7, 8, 9]
+                }
+            ]
+        }),
+        reqs: vec![committed]
+    };
+    let hash = codec.hash.wrap_hashed_bytes(&[0x11; 64])
+        .expect("Expected success");
+    let notify = XactNotify {
+        hash: hash,
+        state: XactNotifyState::Commit {
+            when: XactLinPoint {
+                round: 0x1234567890abcdef,
+                idx: 0x7
+            }
+        }
+    };
+    let hash = codec.hash.wrap_hashed_bytes(&[0x88; 64])
+        .expect("Expected success");
+    let result = XactResult {
+        res: Ok(TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }),
+        hash: hash,
+    };
+    let batch = XactBatch {
+        reqs: vec![sealed],
+        committed: vec![round],
+        results: vec![result],
+        notifies: vec![notify]
+    };
+    let len = codec.buf_size(&batch);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&batch, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(batch, decoded);
 }

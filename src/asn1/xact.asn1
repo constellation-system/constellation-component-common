@@ -7,7 +7,7 @@ IMPORTS Version FROM Version;
 -- (linearization point).
 --
 -- This consists of a consensus round, and an index within that round.
-XactLinPointHeader ::= SEQUENCE {
+XactLinPoint ::= SEQUENCE {
     -- The consensus round ID.
     round OCTET STRING SIZE (16),
     -- Index within the consensus round.
@@ -28,7 +28,7 @@ XactEffectsHeader ::= SEQUENCE {
 }
 
 XactHardNone ::= SEQUENCE {
-    when XactLinPointHeader OPTIONAL
+    when XactLinPoint OPTIONAL
 }
 
 -- Effect constraints on an uncommitted transaction.
@@ -69,17 +69,14 @@ XactUncommittedReqHeader ::= SEQUENCE {
     len INTEGER
 }
 
--- Header for an uncommitted transaction request.
+-- Header for an authorization seal.
 --
 -- The seal data should follow all of the data of this header (including the
--- payload and effect data of the contained request).
-XactSealedUncommittedReqHeader ::= SEQUENCE {
-    -- Length of the authorization seal data, if present.
-    --
-    -- The seal should be computed against the hash field of the request.
-    seal INTEGER OPTIONAL,
-    -- The request.
-    req XactUncommittedReqHeader
+-- payload and effect data of the contained request).  This header should also
+-- follow whatever object is authorized by this seal.
+XactSealHeader ::= SEQUENCE {
+    -- Length of the authorization seal data.
+    len INTEGER,
 }
 
 -- Header for a committed transaction request.
@@ -133,13 +130,13 @@ XactConsensusSealHeader ::= SEQUENCE {
     -- stored outside this structure.
     --
     -- This data will be stored separately from the header.
-    len INTEGER
+    nseals INTEGER
 }
 
 -- Header for a committed consensus round.
 --
--- This will contain one or more XactSealedCommittedReqHeaders and associated
--- data, which were part of the committed round.
+-- This will contain one or more XactCommittedReqHeaders and associated
+-- data, followed by XactSealHeaders, which were part of the committed round.
 --
 -- Since XactCommittedReqHeaders contain a round index, the order in which they
 -- occur here does not matter; they must be reordered acconding to their round
@@ -163,8 +160,7 @@ XactCommittedRoundHeader ::= SEQUENCE {
 --
 -- The actual result data follows this header.
 XactValueHeader ::= SEQUENCE {
-    -- Length of the value data, if present.
-    len INTEGER OPTIONAL
+    len INTEGER
 }
 
 -- Header for a transaction request application-specific error.
@@ -196,7 +192,9 @@ XactResultValueHeader ::= CHOICE {
     -- The transaction request violated a hard effect constraint.
     EffectViolation NULL,
     -- The transaction request failed authorization.
-    Unauthorized NULL
+    Unauthorized NULL,
+    -- An internal error occurred.
+    Internal NULL
 }
 
 XactResultHeader ::= SEQUENCE {
@@ -209,11 +207,11 @@ XactResultHeader ::= SEQUENCE {
 -- Information about a consensus result.
 XactCommitState ::= SEQUENCE {
     -- Linearization point assigned by the consensus round.
-    when XactLinPointHeader
+    when XactLinPoint
 }
 
 -- Notifications about the state of a transaction request.
-XactNotifyState ::= CHOICE {
+XactNotifyStateHeader ::= CHOICE {
     -- The request has been accepted by a peer.
     Accept NULL,
     -- The request has been submitted to a consensus pool.
@@ -223,15 +221,15 @@ XactNotifyState ::= CHOICE {
     -- The request has been dispatched to a processor.
     Dispatch NULL,
     -- The request has been completed.
-    Complete NULL
+    Complete XactCommitState
 }
 
 -- Full notifications about a transaction request.
-XactNotify ::= SEQUENCE {
+XactNotifyHeader ::= SEQUENCE {
     -- Hash of the original request.
     hash OCTET STRING SIZE (64),
     -- State of the transaction request.
-    state XactNotifyState
+    state XactNotifyStateHeader
 }
 
 -- Header for a batch.
@@ -247,7 +245,7 @@ XactBatchHeader ::= SEQUENCE {
     -- Number of XactResultHeaders that follow the request headers.
     nresults INTEGER (0..16777215),
     -- All notifications.
-    notifies SEQUENCE SIZE (0..16777215) OF XactNotify,
+    nnotifies INTEGER (0..16777215)
 }
 
 END
