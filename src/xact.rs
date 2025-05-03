@@ -901,6 +901,466 @@ pub enum XactBatchCodecDecodeError<Header, Req, Committed, Res, Notify> {
     }
 }
 
+impl<RoundID, H, Seal, Payload, Effects>
+    XactCommittedRound<RoundID, H, Seal, Payload, Effects> {
+    #[inline]
+    pub fn new(
+        round: RoundID,
+        seal: Option<XactConsensusSeal<H, Seal>>,
+        reqs: Vec<XactCommittedReq<Payload, Effects>>
+    ) -> Self {
+        XactCommittedRound {
+            round: round,
+            seal: seal,
+            reqs: reqs
+        }
+    }
+
+    #[inline]
+    pub fn round(&self) -> &RoundID {
+        &self.round
+    }
+
+    #[inline]
+    pub fn seal(&self) -> Option<&XactConsensusSeal<H, Seal>> {
+        self.seal.as_ref()
+    }
+
+    #[inline]
+    pub fn reqs(&self) -> &[XactCommittedReq<Payload, Effects>] {
+        &self.reqs
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (RoundID,
+          Option<XactConsensusSeal<H, Seal>>,
+          Vec<XactCommittedReq<Payload, Effects>>) {
+        (self.round, self.seal, self.reqs)
+    }
+}
+
+impl<Payload, Effects> XactCommittedReq<Payload, Effects> {
+    #[inline]
+    pub fn new(
+        class: Uuid,
+        version: Version,
+        idx: usize,
+        payload: Payload,
+        effects: Option<XactCommittedEffects<Effects>>,
+    ) -> Self {
+        XactCommittedReq {
+            class: class,
+            version: version,
+            instance: None,
+            idx: idx,
+            effects: effects,
+            payload: payload
+        }
+    }
+
+    #[inline]
+    pub fn new_with_instance(
+        class: Uuid,
+        version: Version,
+        instance: u64,
+        idx: usize,
+        payload: Payload,
+        effects: Option<XactCommittedEffects<Effects>>,
+    ) -> Self {
+        XactCommittedReq {
+            class: class,
+            version: version,
+            instance: Some(instance),
+            idx: idx,
+            effects: effects,
+            payload: payload
+        }
+    }
+
+    #[inline]
+    pub fn class(&self) -> &Uuid {
+        &self.class
+    }
+
+    #[inline]
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    #[inline]
+    pub fn instance(&self) -> Option<u64> {
+        self.instance
+    }
+
+    #[inline]
+    pub fn idx(&self) -> usize {
+        self.idx
+    }
+
+    #[inline]
+    pub fn effects(&self) -> Option<&XactCommittedEffects<Effects>> {
+        self.effects.as_ref()
+    }
+
+    #[inline]
+    pub fn payload(&self) -> &Payload {
+        &self.payload
+    }
+
+    #[inline]
+    pub fn take(self) -> (Uuid, Version, Option<u64>, usize,
+                          Option<XactCommittedEffects<Effects>>, Payload) {
+        (self.class, self.version, self.instance,
+         self.idx, self.effects, self.payload)
+    }
+}
+
+impl<RoundID, Payload, Effects> XactUncommittedReq<RoundID, Payload, Effects>
+where RoundID: Clone + From<u128> + Into<u128> {
+    #[inline]
+    pub fn new(
+        class: Uuid,
+        version: Version,
+        payload: Payload,
+        effects: XactEffects<RoundID, Effects>,
+    ) -> Self {
+        XactUncommittedReq {
+            class: class,
+            version: version,
+            instance: None,
+            effects: effects,
+            payload: payload
+        }
+    }
+
+    #[inline]
+    pub fn new_with_instance(
+        class: Uuid,
+        version: Version,
+        instance: u64,
+        payload: Payload,
+        effects: XactEffects<RoundID, Effects>,
+    ) -> Self {
+        XactUncommittedReq {
+            class: class,
+            version: version,
+            instance: Some(instance),
+            effects: effects,
+            payload: payload
+        }
+    }
+
+    #[inline]
+    pub fn class(&self) -> &Uuid {
+        &self.class
+    }
+
+    #[inline]
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    #[inline]
+    pub fn instance(&self) -> Option<u64> {
+        self.instance
+    }
+
+    #[inline]
+    pub fn effects(&self) -> &XactEffects<RoundID, Effects> {
+        &self.effects
+    }
+
+    #[inline]
+    pub fn payload(&self) -> &Payload {
+        &self.payload
+    }
+
+    #[inline]
+    pub fn take(self) -> (Uuid, Version, Option<u64>,
+                          XactEffects<RoundID, Effects>, Payload) {
+        (self.class, self.version, self.instance, self.effects, self.payload)
+    }
+}
+
+impl<RoundID, H, Payload, Effects>
+    XactUncommittedHashReq<RoundID, H, Payload, Effects>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    #[inline]
+    pub fn class(&self) -> &Uuid {
+        &self.class
+    }
+
+    #[inline]
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    #[inline]
+    pub fn instance(&self) -> Option<u64> {
+        self.instance
+    }
+
+    #[inline]
+    pub fn hash(&self) -> &H {
+        &self.hash
+    }
+
+    #[inline]
+    pub fn effects(&self) -> &XactEffects<RoundID, Effects> {
+        &self.effects
+    }
+
+    #[inline]
+    pub fn payload(&self) -> &Payload {
+        &self.payload
+    }
+
+    #[inline]
+    pub fn take(self) -> (Uuid, Version, Option<u64>, H,
+                          XactEffects<RoundID, Effects>, Payload) {
+        (self.class, self.version, self.instance,
+         self.hash, self.effects, self.payload)
+    }
+}
+
+impl<Seal, Inner> XactSealed<Seal, Inner> {
+    #[inline]
+    pub fn new(
+        seal: Seal,
+        inner: Inner,
+    ) -> Self {
+        XactSealed {
+            inner: inner,
+            seal: seal
+        }
+    }
+
+    #[inline]
+    pub fn seal(&self) -> &Seal {
+        &self.seal
+    }
+
+    #[inline]
+    pub fn inner(&self) -> &Inner {
+        &self.inner
+    }
+
+    #[inline]
+    pub fn take(self) -> (Seal, Inner) {
+        (self.seal, self.inner)
+    }
+}
+
+impl<Effects> XactCommittedEffects<Effects> {
+    #[inline]
+    pub fn new(
+        hard: bool,
+        effects: Effects
+    ) -> Self {
+        XactCommittedEffects {
+            effects: effects,
+            hard: hard
+        }
+    }
+
+    #[inline]
+    pub fn hard(&self) -> bool {
+        self.hard
+    }
+
+    #[inline]
+    pub fn effects(&self) -> &Effects {
+        &self.effects
+    }
+
+    #[inline]
+    pub fn take(self) -> (bool, Effects) {
+        (self.hard, self.effects)
+    }
+}
+
+impl<H, Res, Err> XactResult<H, Res, Err>
+where
+    H: HashID {
+    #[inline]
+    pub fn new(
+        hash: H,
+        res: Result<Res, XactError<Err>>
+    ) -> Self {
+        XactResult {
+            hash: hash,
+            res: res
+        }
+    }
+
+    #[inline]
+    pub fn hash(&self) -> &H {
+        &self.hash
+    }
+
+    #[inline]
+    pub fn result(&self) -> Result<&Res, &XactError<Err>> {
+        self.res.as_ref()
+    }
+
+    #[inline]
+    pub fn take(self) -> (H, Result<Res, XactError<Err>>) {
+        (self.hash, self.res)
+    }
+}
+
+impl<RoundID, H> XactNotify<RoundID, H>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    #[inline]
+    pub fn new(
+        hash: H,
+        state: XactNotifyState<RoundID>,
+    ) -> Self {
+        XactNotify {
+            hash: hash,
+            state: state
+        }
+    }
+
+    #[inline]
+    pub fn hash(&self) -> &H {
+        &self.hash
+    }
+
+    #[inline]
+    pub fn state(&self) -> &XactNotifyState<RoundID> {
+        &self.state
+    }
+
+    #[inline]
+    pub fn take(self) -> (H, XactNotifyState<RoundID>) {
+        (self.hash, self.state)
+    }
+}
+
+impl<RoundID, H, Seal, Payload, Effects, Res, Err>
+    XactBatch<RoundID, H, Seal, Payload, Effects, Res, Err>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    #[inline]
+    pub fn new(
+        committed: Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+        reqs: Vec<XactSealed<Seal, XactUncommittedReq<RoundID, Payload, Effects>>>,
+        results: Vec<XactResult<H, Res, Err>>,
+        notifies: Vec<XactNotify<RoundID, H>>
+    ) -> Self {
+        XactBatch {
+            committed: committed,
+            reqs: reqs,
+            results: results,
+            notifies: notifies
+        }
+    }
+
+    #[inline]
+    pub fn committed(
+        &self
+    ) -> &[XactCommittedRound<RoundID, H, Seal, Payload, Effects>] {
+        &self.committed
+    }
+
+    #[inline]
+    pub fn uncommitted(
+        &self
+    ) -> &[XactSealed<Seal, XactUncommittedReq<RoundID, Payload, Effects>>] {
+        &self.reqs
+    }
+
+    #[inline]
+    pub fn results(
+        &self
+    ) -> &[XactResult<H, Res, Err>] {
+        &self.results
+    }
+
+    #[inline]
+    pub fn notifies(
+        &self
+    ) -> &[XactNotify<RoundID, H>] {
+        &self.notifies
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+          Vec<XactSealed<Seal, XactUncommittedReq<RoundID, Payload, Effects>>>,
+          Vec<XactResult<H, Res, Err>>,
+          Vec<XactNotify<RoundID, H>>) {
+        (self.committed, self.reqs, self.results, self.notifies)
+    }
+}
+
+impl<RoundID, H, Seal, Payload, Effects, Res, Err>
+    XactHashBatch<RoundID, H, Seal, Payload, Effects, Res, Err>
+where RoundID: Clone + From<u128> + Into<u128>,
+      H: HashID {
+    #[inline]
+    pub fn new(
+        committed: Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+        reqs: Vec<XactSealed<Seal, XactUncommittedHashReq<RoundID, H, Payload,
+                                                          Effects>>>,
+        results: Vec<XactResult<H, Res, Err>>,
+        notifies: Vec<XactNotify<RoundID, H>>
+    ) -> Self {
+        XactHashBatch {
+            committed: committed,
+            reqs: reqs,
+            results: results,
+            notifies: notifies
+        }
+    }
+
+    #[inline]
+    pub fn committed(
+        &self
+    ) -> &[XactCommittedRound<RoundID, H, Seal, Payload, Effects>] {
+        &self.committed
+    }
+
+    #[inline]
+    pub fn uncommitted(
+        &self
+    ) -> &[XactSealed<Seal, XactUncommittedHashReq<RoundID, H, Payload,
+                                                   Effects>>] {
+        &self.reqs
+    }
+
+    #[inline]
+    pub fn results(
+        &self
+    ) -> &[XactResult<H, Res, Err>] {
+        &self.results
+    }
+
+    #[inline]
+    pub fn notifies(
+        &self
+    ) -> &[XactNotify<RoundID, H>] {
+        &self.notifies
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (Vec<XactCommittedRound<RoundID, H, Seal, Payload, Effects>>,
+          Vec<XactSealed<Seal, XactUncommittedHashReq<RoundID, H,
+                                                      Payload, Effects>>>,
+          Vec<XactResult<H, Res, Err>>,
+          Vec<XactNotify<RoundID, H>>) {
+        (self.committed, self.reqs, self.results, self.notifies)
+    }
+}
+
 impl<RoundID> TryFrom<&'_ crate::generated::xact::XactLinPoint>
     for XactLinPoint<RoundID>
 where RoundID: Clone + From<u128> + Into<u128> {
@@ -5810,36 +6270,37 @@ fn test_uncommitted_req_hard_effects_no_instance_blob() {
     assert_eq!(req, decoded);
 }
 
-
-
-/*
-
 #[test]
-fn test_uncommitted_req_soft_effects_no_instance() {
+fn test_uncommitted_req_soft_effects_no_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
     );
     let effects_header: XactEffects<u128, _> = XactEffects::Effects {
-        effects: TestEffects {
-            effects: vec![0, 1, 2]
-        },
+        effects: vec![2, 1, 0],
         hard: false
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xfc, 0xc4, 0xb6, 0x25, 0xad, 0x52, 0x03, 0x6a,
+          0xa0, 0xc7, 0x02, 0x25, 0xee, 0xa3, 0x56, 0x88,
+          0x4c, 0x19, 0xf6, 0x2c, 0x3b, 0x86, 0x90, 0x1a,
+          0x4d, 0x31, 0x77, 0x15, 0x10, 0x5a, 0x34, 0x78,
+          0x1f, 0x72, 0xd0, 0x2d, 0x01, 0x4e, 0x76, 0x95,
+          0xe0, 0x48, 0x3f, 0x7f, 0x7d, 0x52, 0xe3, 0x5c,
+          0xf5, 0x76, 0x19, 0x98, 0x77, 0x78, 0xbc, 0xe1,
+          0xbf, 0x75, 0x8e, 0xba, 0xa2, 0xb9, 0x63, 0x4f]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: None,
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -5849,31 +6310,36 @@ fn test_uncommitted_req_soft_effects_no_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_hard_effects_instance() {
+fn test_uncommitted_req_hard_effects_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
     );
     let effects_header: XactEffects<u128, _> = XactEffects::Effects {
-        effects: TestEffects {
-            effects: vec![0, 1, 2]
-        },
+        effects: vec![2, 1, 0],
         hard: true
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x15, 0xed, 0x53, 0x61, 0x8b, 0xf6, 0x0d, 0xd3,
+          0x12, 0xdb, 0x69, 0x3e, 0x5d, 0x48, 0xdb, 0x44,
+          0x64, 0x29, 0x16, 0x7e, 0x1a, 0x37, 0x5a, 0x2e,
+          0xc8, 0x2d, 0x6a, 0xca, 0x7b, 0x0d, 0xc9, 0xa0,
+          0x87, 0x0f, 0x86, 0xaf, 0xa8, 0x88, 0x2e, 0x0d,
+          0xbe, 0x9a, 0x2a, 0xf5, 0x82, 0x09, 0xa3, 0x2a,
+          0x00, 0x35, 0x87, 0x86, 0x07, 0xa0, 0xc5, 0xec,
+          0xb5, 0x72, 0x96, 0x73, 0xfc, 0xb8, 0x1d, 0x20]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: Some(0x1234567890abcdef),
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -5883,31 +6349,36 @@ fn test_uncommitted_req_hard_effects_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_soft_effects_instance() {
+fn test_uncommitted_req_soft_effects_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
     );
     let effects_header: XactEffects<u128, _> = XactEffects::Effects {
-        effects: TestEffects {
-            effects: vec![0, 1, 2]
-        },
+        effects: vec![2, 1, 0],
         hard: false
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xec, 0x17, 0x8c, 0x3c, 0xb6, 0x57, 0x79, 0x2f,
+          0x34, 0xf5, 0x91, 0xd3, 0x49, 0x72, 0x48, 0xc3,
+          0x83, 0x84, 0x71, 0x64, 0xbe, 0xef, 0xb5, 0xae,
+          0xd7, 0xb6, 0xaf, 0x91, 0xcd, 0xd8, 0xc9, 0x4c,
+          0xb8, 0x7c, 0x5c, 0x36, 0xe9, 0x0a, 0x2e, 0x62,
+          0x71, 0x94, 0x8a, 0xc4, 0x3e, 0x90, 0xc8, 0x7d,
+          0x3a, 0x1d, 0x48, 0x22, 0x51, 0xbb, 0x46, 0x57,
+          0x0a, 0x8a, 0xa2, 0xbc, 0x1e, 0x25, 0x59, 0xa3]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: Some(0x1234567890abcdef),
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -5917,7 +6388,7 @@ fn test_uncommitted_req_soft_effects_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_hard_none_no_linpoint_no_instance() {
+fn test_uncommitted_req_hard_none_no_linpoint_no_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
@@ -5925,20 +6396,27 @@ fn test_uncommitted_req_hard_none_no_linpoint_no_instance() {
     let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
         when: None
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xc7, 0xcc, 0xca, 0x97, 0x28, 0xef, 0xb3, 0xe4,
+          0xec, 0xa4, 0x4f, 0x7b, 0xbc, 0x1d, 0xac, 0x5e,
+          0x36, 0x26, 0x93, 0xc0, 0xd7, 0xeb, 0x90, 0xca,
+          0x2e, 0x48, 0x5d, 0xa8, 0x48, 0xca, 0x35, 0x0f,
+          0x3b, 0x62, 0x0e, 0x5c, 0x65, 0x1a, 0x30, 0xde,
+          0x2e, 0x80, 0x4a, 0x6e, 0xac, 0xaa, 0x7d, 0x57,
+          0x16, 0x74, 0xa4, 0x76, 0x5d, 0x17, 0xf4, 0xb1,
+          0x3d, 0x6c, 0x23, 0xc7, 0x26, 0x3f, 0x8e, 0x33]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: None,
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -5948,7 +6426,7 @@ fn test_uncommitted_req_hard_none_no_linpoint_no_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_hard_none_linpoint_no_instance() {
+fn test_uncommitted_req_hard_none_linpoint_no_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
@@ -5959,20 +6437,27 @@ fn test_uncommitted_req_hard_none_linpoint_no_instance() {
             idx: 0x0f
         })
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x77, 0x85, 0x83, 0xdf, 0x1a, 0x06, 0xc5, 0xc6,
+          0x26, 0x9f, 0x3b, 0x62, 0x01, 0x7b, 0x47, 0x7a,
+          0x53, 0x01, 0x05, 0x67, 0xd9, 0xdc, 0xe8, 0x5f,
+          0x62, 0x0f, 0xb5, 0x18, 0x2d, 0x54, 0x21, 0xae,
+          0xdd, 0xa6, 0xa2, 0xc8, 0x86, 0x5e, 0xc2, 0x25,
+          0xe1, 0xb5, 0x27, 0x6c, 0x83, 0x7f, 0x1f, 0x63,
+          0x4f, 0x1e, 0x45, 0x7f, 0x2d, 0x3a, 0x90, 0x76,
+          0x9d, 0x91, 0x1c, 0x64, 0x45, 0xd1, 0x6e, 0xda]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: None,
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -5982,7 +6467,7 @@ fn test_uncommitted_req_hard_none_linpoint_no_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_hard_none_no_linpoint_instance() {
+fn test_uncommitted_req_hard_none_no_linpoint_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
@@ -5990,20 +6475,27 @@ fn test_uncommitted_req_hard_none_no_linpoint_instance() {
     let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
         when: None
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x64, 0x07, 0xec, 0x83, 0xf5, 0x71, 0xec, 0x93,
+          0xbc, 0xa9, 0x5d, 0x79, 0x9b, 0xb0, 0x39, 0x26,
+          0xaa, 0xcc, 0x4f, 0x4f, 0x68, 0x91, 0x6a, 0x8e,
+          0x8d, 0xc0, 0xfa, 0xb5, 0x96, 0x44, 0xa4, 0x2c,
+          0x5f, 0x3f, 0x24, 0x1b, 0x6c, 0x58, 0x95, 0x80,
+          0x76, 0xbb, 0xcb, 0xaf, 0x6d, 0x5a, 0x0a, 0xa4,
+          0x3c, 0xe3, 0x19, 0x75, 0x45, 0x6f, 0x57, 0x2d,
+          0x6e, 0x11, 0xeb, 0xe3, 0x53, 0x22, 0x59, 0x37]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: Some(0x1234567890abcdef),
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -6013,7 +6505,7 @@ fn test_uncommitted_req_hard_none_no_linpoint_instance() {
 }
 
 #[test]
-fn test_uncommitted_req_hard_none_linpoint_instance() {
+fn test_uncommitted_req_hard_none_linpoint_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
@@ -6024,20 +6516,27 @@ fn test_uncommitted_req_hard_none_linpoint_instance() {
             idx: 0x0f
         })
     };
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x20, 0x76, 0xd1, 0x0e, 0x5b, 0x0f, 0x9c, 0xaf,
+          0xae, 0xbc, 0x52, 0x1b, 0xe1, 0x29, 0x26, 0xae,
+          0x58, 0x9f, 0x07, 0x8d, 0x75, 0xf5, 0xeb, 0x95,
+          0xd2, 0x36, 0x45, 0xf6, 0x91, 0x0f, 0x44, 0x41,
+          0x5d, 0x27, 0x2a, 0xaf, 0xf7, 0x7d, 0x75, 0x23,
+          0x84, 0xc0, 0x1f, 0x7d, 0x32, 0x23, 0xc9, 0xe3,
+          0xba, 0x6d, 0x20, 0xff, 0x41, 0x2f, 0x46, 0xfe,
+          0x77, 0x5a, 0xa1, 0xa5, 0x23, 0x45, 0x1b, 0x68]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: Some(0x1234567890abcdef),
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
@@ -6046,68 +6545,87 @@ fn test_uncommitted_req_hard_none_linpoint_instance() {
     assert_eq!(req, decoded);
 }
 
-
-
-
 #[test]
-fn test_uncommitted_req_soft_none_no_linpoint_no_instance() {
+fn test_uncommitted_req_soft_none_no_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
     );
     let effects_header: XactEffects<u128, _> = XactEffects::SoftNone;
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x53, 0x10, 0x18, 0x5f, 0xc1, 0xa9, 0x2f, 0xb3,
+          0xf6, 0x8b, 0xcb, 0x8e, 0x5c, 0xe4, 0x47, 0xd3,
+          0xf4, 0x7c, 0xa8, 0xfb, 0xb7, 0xfd, 0x63, 0x53,
+          0x4e, 0x67, 0xd7, 0x58, 0x39, 0xf9, 0x6a, 0x2d,
+          0xd7, 0x35, 0xcc, 0x83, 0x9a, 0x90, 0x09, 0x4e,
+          0x25, 0xcf, 0x1f, 0xa4, 0x22, 0x54, 0x9b, 0xe1,
+          0x7c, 0xad, 0x1a, 0x90, 0x70, 0x83, 0x98, 0x95,
+          0x6c, 0xb3, 0x94, 0x64, 0x65, 0x13, 0xd9, 0x4b]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: None,
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
     let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    for byte in decoded.hash.bytes().iter() {
+        print!("0x{:02x}, ", byte);
+    }
+    println!();
 
     assert_eq!(req, decoded);
 }
 
 #[test]
-fn test_uncommitted_req_soft_none_no_linpoint_instance() {
+fn test_uncommitted_req_soft_none_instance_blob() {
     let uuid = Uuid::new_v5(
         &Uuid::NAMESPACE_DNS,
         TEST_SERVICE_NAME.as_bytes()
     );
     let effects_header: XactEffects<u128, _> = XactEffects::SoftNone;
-    let req = XactUncommittedReq {
+    let mut codec: XactUncommittedReqBlobCodec<u128, SHA3Algo> =
+        XactUncommittedReqBlobCodec::create(())
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x8b, 0x5d, 0x1d, 0x7d, 0x87, 0x1e, 0x12, 0xf9,
+          0xa9, 0x2e, 0x7b, 0x0d, 0xcd, 0x24, 0x27, 0xc5,
+          0x84, 0x5b, 0x64, 0xe9, 0x16, 0xc0, 0xde, 0x18,
+          0xcd, 0x6d, 0x06, 0x4d, 0xbd, 0x8a, 0x47, 0x4d,
+          0x9f, 0x05, 0x68, 0x9d, 0x7e, 0x10, 0x8d, 0x45,
+          0xa2, 0x23, 0xc9, 0xf1, 0x80, 0xe5, 0xe7, 0x03,
+          0xb9, 0x4b, 0xac, 0x15, 0xd5, 0xa1, 0x86, 0x8d,
+          0x01, 0x43, 0x76, 0x3b, 0x2f, 0x5f, 0xba, 0x27]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
         version: Version::new(1, 2, 3),
         class: uuid,
         effects: effects_header,
         instance: Some(0x1234567890abcdef),
-        payload: TestPayload {
-            effects: vec![0, 1, 2, 3, 4, 5]
-        }
+        payload: vec![0, 1, 2, 3, 4, 5]
     };
-    let mut codec: XactUncommittedReqCodec<u128, _, _,
-                                           TestPayloadCodec,
-                                           TestEffectsCodec> =
-        XactUncommittedReqCodec::create(((), ()))
-        .expect("Expected success");
     let len = codec.buf_size(&req);
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
     let (decoded, _) = codec.decode(&buf).expect("Expected success");
 
+    for byte in decoded.hash.bytes().iter() {
+        print!("0x{:02x}, ", byte);
+    }
+    println!();
+
     assert_eq!(req, decoded);
 }
-*/
-
 
 #[test]
 fn test_uncommitted_req_hard_effects_no_instance_hash() {
@@ -6150,6 +6668,405 @@ fn test_uncommitted_req_hard_effects_no_instance_hash() {
     let mut buf = vec![0; len];
     let _ = codec.encode(&req, &mut buf).expect("Expected success");
     let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_soft_effects_no_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::Effects {
+        effects: TestEffects {
+            effects: vec![2, 1, 0]
+        },
+        hard: false
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xfc, 0xc4, 0xb6, 0x25, 0xad, 0x52, 0x03, 0x6a,
+          0xa0, 0xc7, 0x02, 0x25, 0xee, 0xa3, 0x56, 0x88,
+          0x4c, 0x19, 0xf6, 0x2c, 0x3b, 0x86, 0x90, 0x1a,
+          0x4d, 0x31, 0x77, 0x15, 0x10, 0x5a, 0x34, 0x78,
+          0x1f, 0x72, 0xd0, 0x2d, 0x01, 0x4e, 0x76, 0x95,
+          0xe0, 0x48, 0x3f, 0x7f, 0x7d, 0x52, 0xe3, 0x5c,
+          0xf5, 0x76, 0x19, 0x98, 0x77, 0x78, 0xbc, 0xe1,
+          0xbf, 0x75, 0x8e, 0xba, 0xa2, 0xb9, 0x63, 0x4f]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: None,
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_hard_effects_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::Effects {
+        effects: TestEffects {
+            effects: vec![2, 1, 0]
+        },
+        hard: true
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x15, 0xed, 0x53, 0x61, 0x8b, 0xf6, 0x0d, 0xd3,
+          0x12, 0xdb, 0x69, 0x3e, 0x5d, 0x48, 0xdb, 0x44,
+          0x64, 0x29, 0x16, 0x7e, 0x1a, 0x37, 0x5a, 0x2e,
+          0xc8, 0x2d, 0x6a, 0xca, 0x7b, 0x0d, 0xc9, 0xa0,
+          0x87, 0x0f, 0x86, 0xaf, 0xa8, 0x88, 0x2e, 0x0d,
+          0xbe, 0x9a, 0x2a, 0xf5, 0x82, 0x09, 0xa3, 0x2a,
+          0x00, 0x35, 0x87, 0x86, 0x07, 0xa0, 0xc5, 0xec,
+          0xb5, 0x72, 0x96, 0x73, 0xfc, 0xb8, 0x1d, 0x20]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_soft_effects_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::Effects {
+        effects: TestEffects {
+            effects: vec![2, 1, 0]
+        },
+        hard: false
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xec, 0x17, 0x8c, 0x3c, 0xb6, 0x57, 0x79, 0x2f,
+          0x34, 0xf5, 0x91, 0xd3, 0x49, 0x72, 0x48, 0xc3,
+          0x83, 0x84, 0x71, 0x64, 0xbe, 0xef, 0xb5, 0xae,
+          0xd7, 0xb6, 0xaf, 0x91, 0xcd, 0xd8, 0xc9, 0x4c,
+          0xb8, 0x7c, 0x5c, 0x36, 0xe9, 0x0a, 0x2e, 0x62,
+          0x71, 0x94, 0x8a, 0xc4, 0x3e, 0x90, 0xc8, 0x7d,
+          0x3a, 0x1d, 0x48, 0x22, 0x51, 0xbb, 0x46, 0x57,
+          0x0a, 0x8a, 0xa2, 0xbc, 0x1e, 0x25, 0x59, 0xa3]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_hard_none_no_linpoint_no_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: None
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0xc7, 0xcc, 0xca, 0x97, 0x28, 0xef, 0xb3, 0xe4,
+          0xec, 0xa4, 0x4f, 0x7b, 0xbc, 0x1d, 0xac, 0x5e,
+          0x36, 0x26, 0x93, 0xc0, 0xd7, 0xeb, 0x90, 0xca,
+          0x2e, 0x48, 0x5d, 0xa8, 0x48, 0xca, 0x35, 0x0f,
+          0x3b, 0x62, 0x0e, 0x5c, 0x65, 0x1a, 0x30, 0xde,
+          0x2e, 0x80, 0x4a, 0x6e, 0xac, 0xaa, 0x7d, 0x57,
+          0x16, 0x74, 0xa4, 0x76, 0x5d, 0x17, 0xf4, 0xb1,
+          0x3d, 0x6c, 0x23, 0xc7, 0x26, 0x3f, 0x8e, 0x33]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: None,
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_hard_none_linpoint_no_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: Some(XactLinPoint {
+            round: 0x1234567890abcdef,
+            idx: 0x0f
+        })
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x77, 0x85, 0x83, 0xdf, 0x1a, 0x06, 0xc5, 0xc6,
+          0x26, 0x9f, 0x3b, 0x62, 0x01, 0x7b, 0x47, 0x7a,
+          0x53, 0x01, 0x05, 0x67, 0xd9, 0xdc, 0xe8, 0x5f,
+          0x62, 0x0f, 0xb5, 0x18, 0x2d, 0x54, 0x21, 0xae,
+          0xdd, 0xa6, 0xa2, 0xc8, 0x86, 0x5e, 0xc2, 0x25,
+          0xe1, 0xb5, 0x27, 0x6c, 0x83, 0x7f, 0x1f, 0x63,
+          0x4f, 0x1e, 0x45, 0x7f, 0x2d, 0x3a, 0x90, 0x76,
+          0x9d, 0x91, 0x1c, 0x64, 0x45, 0xd1, 0x6e, 0xda]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: None,
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_hard_none_no_linpoint_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: None
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x64, 0x07, 0xec, 0x83, 0xf5, 0x71, 0xec, 0x93,
+          0xbc, 0xa9, 0x5d, 0x79, 0x9b, 0xb0, 0x39, 0x26,
+          0xaa, 0xcc, 0x4f, 0x4f, 0x68, 0x91, 0x6a, 0x8e,
+          0x8d, 0xc0, 0xfa, 0xb5, 0x96, 0x44, 0xa4, 0x2c,
+          0x5f, 0x3f, 0x24, 0x1b, 0x6c, 0x58, 0x95, 0x80,
+          0x76, 0xbb, 0xcb, 0xaf, 0x6d, 0x5a, 0x0a, 0xa4,
+          0x3c, 0xe3, 0x19, 0x75, 0x45, 0x6f, 0x57, 0x2d,
+          0x6e, 0x11, 0xeb, 0xe3, 0x53, 0x22, 0x59, 0x37]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_hard_none_linpoint_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::HardNone {
+        when: Some(XactLinPoint {
+            round: 0x1234567890abcdef,
+            idx: 0x0f
+        })
+    };
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x20, 0x76, 0xd1, 0x0e, 0x5b, 0x0f, 0x9c, 0xaf,
+          0xae, 0xbc, 0x52, 0x1b, 0xe1, 0x29, 0x26, 0xae,
+          0x58, 0x9f, 0x07, 0x8d, 0x75, 0xf5, 0xeb, 0x95,
+          0xd2, 0x36, 0x45, 0xf6, 0x91, 0x0f, 0x44, 0x41,
+          0x5d, 0x27, 0x2a, 0xaf, 0xf7, 0x7d, 0x75, 0x23,
+          0x84, 0xc0, 0x1f, 0x7d, 0x32, 0x23, 0xc9, 0xe3,
+          0xba, 0x6d, 0x20, 0xff, 0x41, 0x2f, 0x46, 0xfe,
+          0x77, 0x5a, 0xa1, 0xa5, 0x23, 0x45, 0x1b, 0x68]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_soft_none_no_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::SoftNone;
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x53, 0x10, 0x18, 0x5f, 0xc1, 0xa9, 0x2f, 0xb3,
+          0xf6, 0x8b, 0xcb, 0x8e, 0x5c, 0xe4, 0x47, 0xd3,
+          0xf4, 0x7c, 0xa8, 0xfb, 0xb7, 0xfd, 0x63, 0x53,
+          0x4e, 0x67, 0xd7, 0x58, 0x39, 0xf9, 0x6a, 0x2d,
+          0xd7, 0x35, 0xcc, 0x83, 0x9a, 0x90, 0x09, 0x4e,
+          0x25, 0xcf, 0x1f, 0xa4, 0x22, 0x54, 0x9b, 0xe1,
+          0x7c, 0xad, 0x1a, 0x90, 0x70, 0x83, 0x98, 0x95,
+          0x6c, 0xb3, 0x94, 0x64, 0x65, 0x13, 0xd9, 0x4b]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: None,
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    for byte in decoded.hash.bytes().iter() {
+        print!("0x{:02x}, ", byte);
+    }
+    println!();
+
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_uncommitted_req_soft_none_instance_hash() {
+    let uuid = Uuid::new_v5(
+        &Uuid::NAMESPACE_DNS,
+        TEST_SERVICE_NAME.as_bytes()
+    );
+    let effects_header: XactEffects<u128, _> = XactEffects::SoftNone;
+    let mut codec: XactUncommittedReqHashCodec<u128, SHA3Algo, _, _,
+                                               TestPayloadCodec,
+                                               TestEffectsCodec> =
+        XactUncommittedReqHashCodec::create(((), ()))
+        .expect("Expected success");
+    let hash = codec.hash.wrap_hashed_bytes(
+        &[0x8b, 0x5d, 0x1d, 0x7d, 0x87, 0x1e, 0x12, 0xf9,
+          0xa9, 0x2e, 0x7b, 0x0d, 0xcd, 0x24, 0x27, 0xc5,
+          0x84, 0x5b, 0x64, 0xe9, 0x16, 0xc0, 0xde, 0x18,
+          0xcd, 0x6d, 0x06, 0x4d, 0xbd, 0x8a, 0x47, 0x4d,
+          0x9f, 0x05, 0x68, 0x9d, 0x7e, 0x10, 0x8d, 0x45,
+          0xa2, 0x23, 0xc9, 0xf1, 0x80, 0xe5, 0xe7, 0x03,
+          0xb9, 0x4b, 0xac, 0x15, 0xd5, 0xa1, 0x86, 0x8d,
+          0x01, 0x43, 0x76, 0x3b, 0x2f, 0x5f, 0xba, 0x27]
+    ).expect("Expected success");
+    let req = XactUncommittedHashReq {
+        hash: hash,
+        version: Version::new(1, 2, 3),
+        class: uuid,
+        effects: effects_header,
+        instance: Some(0x1234567890abcdef),
+        payload: TestPayload {
+            effects: vec![0, 1, 2, 3, 4, 5]
+        }
+    };
+    let len = codec.buf_size(&req);
+    let mut buf = vec![0; len];
+    let _ = codec.encode(&req, &mut buf).expect("Expected success");
+    let (decoded, _) = codec.decode(&buf).expect("Expected success");
+
+    for byte in decoded.hash.bytes().iter() {
+        print!("0x{:02x}, ", byte);
+    }
+    println!();
 
     assert_eq!(req, decoded);
 }
