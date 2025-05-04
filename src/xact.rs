@@ -259,6 +259,10 @@ pub enum XactError<Err> {
     EffectViolation,
     /// Transaction was not properly authorized.
     Unauthorized,
+    /// Transaction was not committed, but produces effects.
+    Uncommitted,
+    /// Trasaction's hash does not match the hash in a seal.
+    HashMismatch,
     /// Internal error occurred during execution.
     Internal
 }
@@ -959,6 +963,39 @@ pub enum XactBatchCodecDecodeError<Header, Req, Committed, Res, Notify> {
     },
     State {
         err: Vec<u8>
+    }
+}
+
+impl<H, Seal> XactConsensusSeal<H, Seal> {
+    #[inline]
+    pub fn new(
+        hashes: Vec<H>,
+        seals: Vec<Seal>
+    ) -> Self {
+        XactConsensusSeal {
+            hashes: hashes,
+            seals: seals
+        }
+    }
+
+    #[inline]
+    pub fn hashes(&self) -> &[H] {
+        &self.hashes
+    }
+
+    #[inline]
+    pub fn seal(&self) -> &[Seal] {
+        &self.seals
+    }
+
+    #[inline]
+    pub fn take(
+        self
+    ) -> (
+        Vec<H>,
+        Vec<Seal>
+    ) {
+        (self.hashes, self.seals)
     }
 }
 
@@ -3801,6 +3838,8 @@ where
             Err(XactError::InvalidEffect) |
             Err(XactError::EffectViolation) |
             Err(XactError::Unauthorized) |
+            Err(XactError::Uncommitted) |
+            Err(XactError::HashMismatch) |
             Err(XactError::Internal) => 1
         };
 
@@ -3893,6 +3932,14 @@ where
                     )),
                     XactError::Unauthorized => Ok((
                         XactResultValueHeader::Unauthorized(Default::default()),
+                        None
+                    )),
+                    XactError::Uncommitted => Ok((
+                        XactResultValueHeader::Uncommitted(Default::default()),
+                        None
+                    )),
+                    XactError::HashMismatch => Ok((
+                        XactResultValueHeader::HashMismatch(Default::default()),
                         None
                     )),
                     XactError::Internal => Ok((
@@ -4036,6 +4083,22 @@ where
 
                 Ok((res, curr))
             }
+            XactResultValueHeader::Uncommitted(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Uncommitted),
+                    hash: hash
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::HashMismatch(_) => {
+                let res = XactResult {
+                    res: Err(XactError::HashMismatch),
+                    hash: hash
+                };
+
+                Ok((res, curr))
+            }
             XactResultValueHeader::Internal(_) => {
                 let res = XactResult {
                     res: Err(XactError::Internal),
@@ -4092,6 +4155,8 @@ where
             Err(XactError::InvalidEffect) |
             Err(XactError::EffectViolation) |
             Err(XactError::Unauthorized) |
+            Err(XactError::Uncommitted) |
+            Err(XactError::HashMismatch) |
             Err(XactError::Internal) => 1
         };
 
@@ -4175,6 +4240,14 @@ where
                     )),
                     XactError::Unauthorized => Ok((
                         XactResultValueHeader::Unauthorized(Default::default()),
+                        None
+                    )),
+                    XactError::Uncommitted => Ok((
+                        XactResultValueHeader::Uncommitted(Default::default()),
+                        None
+                    )),
+                    XactError::HashMismatch => Ok((
+                        XactResultValueHeader::HashMismatch(Default::default()),
                         None
                     )),
                     XactError::Internal => Ok((
@@ -4319,6 +4392,22 @@ where
             XactResultValueHeader::Unauthorized(_) => {
                 let res = XactResult {
                     res: Err(XactError::Unauthorized),
+                    hash: hash
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::Uncommitted(_) => {
+                let res = XactResult {
+                    res: Err(XactError::Uncommitted),
+                    hash: hash
+                };
+
+                Ok((res, curr))
+            }
+            XactResultValueHeader::HashMismatch(_) => {
+                let res = XactResult {
+                    res: Err(XactError::HashMismatch),
                     hash: hash
                 };
 
@@ -4552,8 +4641,8 @@ where
                 .committed_codec
                 .encode(committed, &mut buf[curr..])
                 .map_err(|err| XactBatchCodecEncodeError::Committed {
-                err: err
-            })?;
+                    err: err
+                })?;
         }
 
         for req in val.reqs.iter() {
@@ -4676,6 +4765,90 @@ where
             },
             curr
         ))
+    }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+    XactBatchHashCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Codec<Payload>,
+    PayloadCodec::Param: Clone,
+    EffectCodec: Codec<Effect>,
+    EffectCodec::Param: Clone,
+    SealCodec: Codec<Seal>,
+    SealCodec::Param: Clone,
+    ResCodec: Codec<Res>,
+    ResCodec::Param: Clone,
+    ErrCodec: Codec<Err>,
+    ErrCodec::Param: Clone
+{
+    // Generate a hash for an [XactUncommittedHashReq].
+    pub fn hash(
+        &mut self,
+        req: &XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
+    ) -> Result<
+        H::HashID,
+        <XactUncommittedReqHashCodec<
+            RoundID,
+            H,
+            Payload,
+            Effect,
+            PayloadCodec,
+            EffectCodec
+        > as Codec<
+            XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
+        >>::EncodeError
+    > {
+        self.req_codec.inner_codec.hash(req)
+    }
+
+    // Generate a hash for an [XactCommittedReq].
+    pub fn hash_committed(
+        &mut self,
+        req: &XactCommittedReq<Payload, Effect>
+    ) -> Result<
+        H::HashID,
+        <XactUncommittedReqHashCodec<
+            RoundID,
+            H,
+            Payload,
+            Effect,
+            PayloadCodec,
+            EffectCodec
+        > as Codec<
+            XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
+        >>::EncodeError
+    > {
+        self.req_codec.inner_codec.hash_committed(req)
     }
 }
 
@@ -4911,8 +5084,8 @@ where
                 .committed_codec
                 .encode(committed, &mut buf[curr..])
                 .map_err(|err| XactBatchCodecEncodeError::Committed {
-                err: err
-            })?;
+                    err: err
+                })?;
         }
 
         for req in val.reqs.iter() {
@@ -5225,8 +5398,8 @@ where
                 .committed_codec
                 .encode(committed, &mut buf[curr..])
                 .map_err(|err| XactBatchCodecEncodeError::Committed {
-                err: err
-            })?;
+                    err: err
+                })?;
         }
 
         for req in val.reqs.iter() {
@@ -5388,6 +5561,12 @@ where
             }
             XactError::Unauthorized => {
                 write!(f, "transaction request was unauthorization")
+            }
+            XactError::Uncommitted => {
+                write!(f, "transaction produced effects but was not committed")
+            }
+            XactError::HashMismatch => {
+                write!(f, "transaction's hash does not match seal")
             }
             XactError::Internal => {
                 write!(f, "internal error processing transaction request")

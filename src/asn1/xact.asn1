@@ -193,6 +193,10 @@ XactResultValueHeader ::= CHOICE {
     EffectViolation NULL,
     -- The transaction request failed authorization.
     Unauthorized NULL,
+    -- The transaction is uncommitted, but produces effects.
+    Uncommitted NULL,
+    -- The transaction's hash does not match the hash in a seal.
+    HashMismatch NULL,
     -- An internal error occurred.
     Internal NULL
 }
