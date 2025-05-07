@@ -14,6 +14,24 @@ XactLinPoint ::= SEQUENCE {
     idx INTEGER (0..15),
 }
 
+-- Selections of kinds of notifications to receive.
+XactNotifySelections ::= SEQUENCE {
+    -- Send notifications when a transaction is accepted.
+    accept BOOLEAN,
+    -- Send notifications when a transaction is dispatched for execution
+    -- prior to consensus
+    precommit_dispatch BOOLEAN,
+    -- Send notifications when a transaction is submitted to consensus.
+    consensus BOOLEAN,
+    -- Send notifications when a transaction is committed by a consensus pool.
+    commit BOOLEAN,
+    -- Send notifications when a transaction is dispatched for execution
+    -- after being committed.
+    dispatch BOOLEAN,
+    -- Send full completion notifications, containing result or error data.
+    full_finish BOOLEAN
+}
+
 -- Header for effects constraint data.
 --
 -- The actual effects data follows this, if a length is given.
@@ -62,7 +80,7 @@ XactUncommittedReqHeader ::= SEQUENCE {
     -- Version of the transaction class.
     version Version,
     -- Instance ID of the transaction class, if applicable.
-    instance INTEGER OPTIONAL,
+    instance INTEGER,
     -- Effects constraints on the request.
     effects XactUncommittedEffectsHeader,
     -- Length of the payload data.
@@ -90,7 +108,7 @@ XactCommittedReqHeader ::= SEQUENCE {
     -- Version of the transaction class.
     version Version,
     -- Instance ID of the transaction class, if applicable.
-    instance INTEGER OPTIONAL,
+    instance INTEGER,
     -- Round index in at which this transaction takes place.
     idx INTEGER (0..15),
     -- Effects constraints on the request.
@@ -166,19 +184,11 @@ XactValueHeader ::= SEQUENCE {
 -- Header for a transaction request application-specific error.
 --
 -- The actual error data follows this header.
-XactErrorHeader ::= SEQUENCE {
-    -- Length of the error value data.
-    len INTEGER
-}
-
--- Header for a transaction result.
-XactResultValueHeader ::= CHOICE {
-    -- The transaction completed normally.
-    Ok XactValueHeader,
+XactErrorHeader ::= CHOICE {
     -- An application-level error occurred.
     --
     -- The integer specifies the length of the application-specific data.
-    Error XactErrorHeader,
+    Error XactValueHeader,
     -- The transaction class ID provided is not supported.
     UnknownClass NULL,
     -- The version of the transaction class provided is not supported.
@@ -201,11 +211,18 @@ XactResultValueHeader ::= CHOICE {
     Internal NULL
 }
 
+-- Header for a transaction result.
 XactResultHeader ::= SEQUENCE {
-    -- Hash of the original request.
-    hash OCTET STRING SIZE (64),
-    -- The result value.
-    value XactResultValueHeader
+    -- Linearization point for when this occurred.
+    when XactLinPoint,
+    -- Length of result data.
+    len INTEGER
+}
+
+-- Information about a consensus result.
+XactPrecommitState ::= SEQUENCE {
+    -- Linearization point assigned by the consensus round.
+    when XactLinPoint OPTIONAL
 }
 
 -- Information about a consensus result.
@@ -218,14 +235,22 @@ XactCommitState ::= SEQUENCE {
 XactNotifyStateHeader ::= CHOICE {
     -- The request has been accepted by a peer.
     Accept NULL,
+    -- The request has been dispatched for execution prior to consensus.
+    PrecommitDispatch XactPrecommitState,
     -- The request has been submitted to a consensus pool.
     Consensus NULL,
     -- A batch containing the request has been comitted by the consensus pool.
     Commit XactCommitState,
     -- The request has been dispatched to a processor.
-    Dispatch NULL,
+    Dispatch XactCommitState,
     -- The request has been completed.
-    Complete XactCommitState
+    Success XactResultHeader,
+    -- The request failed with an error.
+    Error XactErrorHeader,
+    -- The request completed successfully.  No result data accompanies this.
+    Finished XactCommitState,
+    -- The request failed with an error.  No error data accompanies this.
+    Fail NULL
 }
 
 -- Full notifications about a transaction request.
@@ -246,8 +271,6 @@ XactBatchHeader ::= SEQUENCE {
     -- Number of XactSealedUncommittedReqHeaders that follow the commited
     -- round headers.
     nreqs INTEGER (0..16777215),
-    -- Number of XactResultHeaders that follow the request headers.
-    nresults INTEGER (0..16777215),
     -- All notifications.
     nnotifies INTEGER (0..16777215)
 }
