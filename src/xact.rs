@@ -976,6 +976,11 @@ impl<H, Seal> XactConsensusSeal<H, Seal> {
     }
 
     #[inline]
+    pub fn nhashes(&self) -> usize {
+        self.hashes.len()
+    }
+
+    #[inline]
     pub fn hashes(&self) -> &[H] {
         &self.hashes
     }
@@ -1172,6 +1177,25 @@ where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashID
 {
+    #[inline]
+    pub fn new(
+        hash: H,
+        class: Uuid,
+        version: Version,
+        instance: u64,
+        payload: Payload,
+        effects: XactEffects<RoundID, Effects>
+    ) -> Self {
+        XactUncommittedHashReq {
+            hash: hash,
+            class: class,
+            version: version,
+            instance: instance,
+            effects: effects,
+            payload: payload
+        }
+    }
+
     #[inline]
     pub fn class(&self) -> &Uuid {
         &self.class
@@ -1580,7 +1604,6 @@ where
         })
     }
 
-    #[inline]
     fn buf_size(
         &self,
         val: &XactUncommittedReq<RoundID, Payload, Effect>
@@ -5391,6 +5414,51 @@ where
             },
             curr
         ))
+    }
+}
+
+impl<RoundID, H, Res, Err> Display for XactNotify<RoundID, H, Res, Err>
+where
+    RoundID: Clone + Display + From<u128> + Into<u128>,
+    H: Display + HashID,
+    Res: Display,
+    Err: Display {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        write!(f, "{} {}", self.hash, self.state)
+    }
+}
+impl<RoundID, Res, Err> Display for XactNotifyState<RoundID, Res, Err>
+where
+    RoundID: Clone + Display + From<u128> + Into<u128>,
+    Res: Display,
+    Err: Display {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            XactNotifyState::Accept => write!(f, "accepted"),
+            XactNotifyState::PrecommitDispatch { when: Some(when) } =>
+                write!(f, "dispatched without commit ({})", when),
+            XactNotifyState::PrecommitDispatch { when: None } =>
+                write!(f, "dispatched without commit"),
+            XactNotifyState::Consensus => write!(f, "submitted to consensus"),
+            XactNotifyState::Commit { when } =>
+                write!(f, "committed ({})", when),
+            XactNotifyState::Dispatch { when } =>
+                write!(f, "dispatched ({})", when),
+            XactNotifyState::Success { result: Some(result), when } =>
+                write!(f, "succeeded ({}), result: {}", when, result),
+            XactNotifyState::Success { result: None, when } =>
+                write!(f, "succeeded ({})", when),
+            XactNotifyState::Error { error: Some(error) } =>
+                write!(f, "error: {}", error),
+            XactNotifyState::Error { error: None } =>
+                write!(f, "failed")
+        }
     }
 }
 
