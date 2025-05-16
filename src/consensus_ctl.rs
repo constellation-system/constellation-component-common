@@ -78,7 +78,8 @@ where
 
 #[derive(Clone)]
 pub struct ConsensusCtlSubmitCodec<H>
-where H: HashAlgo {
+where
+    H: HashAlgo {
     header_codec: ConsensusCtlSubmitHeaderCodec,
     hash: H
 }
@@ -168,12 +169,11 @@ pub enum ConsensusCtlRoundDecodeError<Header, Seal> {
 
 impl<H> ConsensusCtlSubmit<H>
 where
-    H: HashID {
+    H: HashID
+{
     #[inline]
     pub fn new(hashes: Vec<H>) -> Self {
-        ConsensusCtlSubmit {
-            hashes: hashes
-        }
+        ConsensusCtlSubmit { hashes: hashes }
     }
 
     #[inline]
@@ -190,7 +190,8 @@ where
 impl<RoundID, H, Seal> ConsensusCtlRound<RoundID, H, Seal>
 where
     RoundID: Clone + From<u128> + Into<u128>,
-    H: HashID {
+    H: HashID
+{
     #[inline]
     pub fn new(
         round: RoundID,
@@ -226,7 +227,9 @@ where
 }
 
 impl<H> Default for ConsensusCtlSubmitCodec<H>
-where H: Default + HashAlgo {
+where
+    H: Default + HashAlgo
+{
     #[inline]
     fn default() -> Self {
         ConsensusCtlSubmitCodec {
@@ -237,18 +240,22 @@ where H: Default + HashAlgo {
 }
 
 impl<H> Codec<ConsensusCtlSubmit<H::HashID>> for ConsensusCtlSubmitCodec<H>
-where H: Default + HashAlgo {
+where
+    H: Default + HashAlgo
+{
     type CreateError = Infallible;
-    type EncodeError = ConsensusCtlSubmitEncodeError<
-        <ConsensusCtlSubmitHeaderCodec as Codec<
-            ConsensusCtlSubmitHeader
-        >>::EncodeError
-    >;
-    type DecodeError = ConsensusCtlSubmitDecodeError<
-        <ConsensusCtlSubmitHeaderCodec as Codec<
-            ConsensusCtlSubmitHeader
-        >>::DecodeError
-    >;
+    type DecodeError =
+        ConsensusCtlSubmitDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError
+        >;
+    type EncodeError =
+        ConsensusCtlSubmitEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError
+        >;
     type Param = ();
 
     #[inline]
@@ -284,7 +291,9 @@ where H: Default + HashAlgo {
         curr += self
             .header_codec
             .encode(&header, &mut buf[curr..])
-            .map_err(|err| ConsensusCtlSubmitEncodeError::Header { err: err })?;
+            .map_err(|err| ConsensusCtlSubmitEncodeError::Header {
+                err: err
+            })?;
 
         if curr + hashes_len < buf.len() {
             for hash in val.hashes.iter() {
@@ -302,13 +311,12 @@ where H: Default + HashAlgo {
     fn decode(
         &mut self,
         buf: &[u8]
-    ) -> Result<(ConsensusCtlSubmit<H::HashID>, usize), Self::DecodeError>
-    {
+    ) -> Result<(ConsensusCtlSubmit<H::HashID>, usize), Self::DecodeError> {
         let mut curr = 0;
-        let (header, nbytes) = self
-            .header_codec
-            .decode(&buf[curr..])
-            .map_err(|err| ConsensusCtlSubmitDecodeError::Header { err: err })?;
+        let (header, nbytes) =
+            self.header_codec.decode(&buf[curr..]).map_err(|err| {
+                ConsensusCtlSubmitDecodeError::Header { err: err }
+            })?;
 
         curr += nbytes;
 
@@ -318,10 +326,12 @@ where H: Default + HashAlgo {
 
         if curr + hashes_len < buf.len() {
             for _ in 0..nhashes {
-                let hash = self.hash.wrap_hashed_bytes(&buf[curr..curr + 64])
-                    .map_err(|err| ConsensusCtlSubmitDecodeError::Hash {
-                        err: err
-                    })?;
+                let hash = self
+                    .hash
+                    .wrap_hashed_bytes(&buf[curr..curr + 64])
+                    .map_err(|err| {
+                    ConsensusCtlSubmitDecodeError::Hash { err: err }
+                })?;
 
                 hashes.push(hash);
                 curr += 64;
@@ -330,9 +340,7 @@ where H: Default + HashAlgo {
             return Err(ConsensusCtlSubmitDecodeError::TooShort);
         }
 
-        let out = ConsensusCtlSubmit {
-            hashes: hashes
-        };
+        let out = ConsensusCtlSubmit { hashes: hashes };
 
         Ok((out, curr))
     }
@@ -344,20 +352,23 @@ impl<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Default + HashAlgo,
-    SealCodec: Codec<Seal> {
+    SealCodec: Codec<Seal>
+{
     type CreateError = SealCodec::CreateError;
-    type EncodeError = ConsensusCtlRoundEncodeError<
-        <ConsensusCtlSubmitHeaderCodec as Codec<
-            ConsensusCtlSubmitHeader
-        >>::EncodeError,
-        SealCodec::EncodeError
-    >;
-    type DecodeError = ConsensusCtlRoundDecodeError<
-        <ConsensusCtlSubmitHeaderCodec as Codec<
-            ConsensusCtlSubmitHeader
-        >>::DecodeError,
-        SealCodec::DecodeError
-    >;
+    type DecodeError =
+        ConsensusCtlRoundDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError,
+            SealCodec::DecodeError
+        >;
+    type EncodeError =
+        ConsensusCtlRoundEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError,
+            SealCodec::EncodeError
+        >;
     type Param = SealCodec::Param;
 
     #[inline]
@@ -435,8 +446,8 @@ where
                 curr += self
                     .seal_header_codec
                     .encode(&header, &mut buf[curr..])
-                    .map_err(|err| {
-                        ConsensusCtlRoundEncodeError::Header { err: err }
+                    .map_err(|err| ConsensusCtlRoundEncodeError::Header {
+                        err: err
                     })?;
 
                 if curr + seal_len < buf.len() {
@@ -455,9 +466,10 @@ where
     fn decode(
         &mut self,
         buf: &[u8]
-    ) -> Result<(ConsensusCtlRound<RoundID, H::HashID, Seal>, usize),
-                Self::DecodeError>
-    {
+    ) -> Result<
+        (ConsensusCtlRound<RoundID, H::HashID, Seal>, usize),
+        Self::DecodeError
+    > {
         let mut curr = 0;
         let (header, nbytes) = self
             .header_codec
@@ -466,18 +478,17 @@ where
 
         curr += nbytes;
 
-        let round = header.round.clone().try_into().map_err(|err| {
-            ConsensusCtlRoundDecodeError::Round { err: err }
-        })?;
+        let round =
+            header.round.clone().try_into().map_err(|err| {
+                ConsensusCtlRoundDecodeError::Round { err: err }
+            })?;
         let round = u128::from_le_bytes(round);
         let round = round.into();
         let mut hashes = Vec::with_capacity(header.hashes.len());
 
         for hash in header.hashes.iter() {
             let hash = self.hash.wrap_hashed_bytes(hash).map_err(|err| {
-                ConsensusCtlRoundDecodeError::Hash {
-                    err: err
-                }
+                ConsensusCtlRoundDecodeError::Hash { err: err }
             })?;
 
             hashes.push(hash);
@@ -491,9 +502,7 @@ where
             for _ in 0..nseals {
                 let (header, nbytes) =
                     self.seal_header_codec.decode(&buf[curr..]).map_err(
-                        |err| ConsensusCtlRoundDecodeError::Header {
-                            err: err
-                        }
+                        |err| ConsensusCtlRoundDecodeError::Header { err: err }
                     )?;
 
                 curr += nbytes;
@@ -527,7 +536,9 @@ where
 }
 
 impl<Header> ScopedError for ConsensusCtlSubmitEncodeError<Header>
-where Header: ScopedError {
+where
+    Header: ScopedError
+{
     #[inline]
     fn scope(&self) -> ErrorScope {
         match self {
@@ -538,8 +549,10 @@ where Header: ScopedError {
 }
 
 impl<Header, Seal> ScopedError for ConsensusCtlRoundEncodeError<Header, Seal>
-where Header: ScopedError,
-      Seal: ScopedError {
+where
+    Header: ScopedError,
+    Seal: ScopedError
+{
     #[inline]
     fn scope(&self) -> ErrorScope {
         match self {
@@ -551,8 +564,10 @@ where Header: ScopedError,
 }
 
 impl<Header, Seal> ScopedError for ConsensusCtlRoundDecodeError<Header, Seal>
-where Header: ScopedError,
-      Seal: ScopedError {
+where
+    Header: ScopedError,
+    Seal: ScopedError
+{
     #[inline]
     fn scope(&self) -> ErrorScope {
         match self {
@@ -566,7 +581,9 @@ where Header: ScopedError,
 }
 
 impl<Header> ScopedError for ConsensusCtlSubmitDecodeError<Header>
-where Header: ScopedError {
+where
+    Header: ScopedError
+{
     #[inline]
     fn scope(&self) -> ErrorScope {
         match self {
@@ -578,8 +595,10 @@ where Header: ScopedError {
 }
 
 impl<Header, Seal> Display for ConsensusCtlRoundEncodeError<Header, Seal>
-where Header: Display,
-      Seal: Display {
+where
+    Header: Display,
+    Seal: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
@@ -587,15 +606,18 @@ where Header: Display,
         match self {
             ConsensusCtlRoundEncodeError::Header { err } => err.fmt(f),
             ConsensusCtlRoundEncodeError::Seal { err } => err.fmt(f),
-            ConsensusCtlRoundEncodeError::TooShort =>
+            ConsensusCtlRoundEncodeError::TooShort => {
                 write!(f, "buffer is too short")
+            }
         }
     }
 }
 
 impl<Header, Seal> Display for ConsensusCtlRoundDecodeError<Header, Seal>
-where Header: Display,
-      Seal: Display {
+where
+    Header: Display,
+    Seal: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
@@ -604,30 +626,37 @@ where Header: Display,
             ConsensusCtlRoundDecodeError::Header { err } => err.fmt(f),
             ConsensusCtlRoundDecodeError::Hash { err } => err.fmt(f),
             ConsensusCtlRoundDecodeError::Seal { err } => err.fmt(f),
-            ConsensusCtlRoundDecodeError::Round { .. } =>
-                write!(f, "wrong size of round ID"),
-            ConsensusCtlRoundDecodeError::TooShort =>
+            ConsensusCtlRoundDecodeError::Round { .. } => {
+                write!(f, "wrong size of round ID")
+            }
+            ConsensusCtlRoundDecodeError::TooShort => {
                 write!(f, "buffer is too short")
+            }
         }
     }
 }
 
 impl<Header> Display for ConsensusCtlSubmitEncodeError<Header>
-where Header: Display {
+where
+    Header: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
             ConsensusCtlSubmitEncodeError::Header { err } => err.fmt(f),
-            ConsensusCtlSubmitEncodeError::TooShort =>
+            ConsensusCtlSubmitEncodeError::TooShort => {
                 write!(f, "buffer is too short")
+            }
         }
     }
 }
 
 impl<Header> Display for ConsensusCtlSubmitDecodeError<Header>
-where Header: Display {
+where
+    Header: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
@@ -635,8 +664,9 @@ where Header: Display {
         match self {
             ConsensusCtlSubmitDecodeError::Header { err } => err.fmt(f),
             ConsensusCtlSubmitDecodeError::Hash { err } => err.fmt(f),
-            ConsensusCtlSubmitDecodeError::TooShort =>
+            ConsensusCtlSubmitDecodeError::TooShort => {
                 write!(f, "buffer is too short")
+            }
         }
     }
 }
@@ -749,41 +779,72 @@ fn test_round_header() {
 #[test]
 fn test_submit() {
     let mut codec: ConsensusCtlSubmitCodec<SHA3Algo> =
-        ConsensusCtlSubmitCodec::create(())
-        .expect("Expected success");
+        ConsensusCtlSubmitCodec::create(()).expect("Expected success");
     let submit = ConsensusCtlSubmit {
         hashes: vec![
-            codec.hash.wrap_hashed_bytes(&[0x00; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x00; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x11; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x11; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x22; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x22; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x33; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x33; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x44; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x44; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x55; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x55; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x66; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x66; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x77; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x77; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x88; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x88; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x99; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x99; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xaa; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xaa; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xbb; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xbb; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xcc; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xcc; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xdd; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xdd; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xee; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xee; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xff; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xff; 64])
                 .expect("Expected success"),
         ]
     };
@@ -797,44 +858,78 @@ fn test_submit() {
 
 #[test]
 fn test_round_no_seals() {
-    let mut codec: ConsensusCtlRoundCodec<_, SHA3Algo,
-                                          TestSeal, TestSealCodec> =
-        ConsensusCtlRoundCodec::create(())
-        .expect("Expected success");
+    let mut codec: ConsensusCtlRoundCodec<
+        _,
+        SHA3Algo,
+        TestSeal,
+        TestSealCodec
+    > = ConsensusCtlRoundCodec::create(()).expect("Expected success");
     let round = ConsensusCtlRound {
         round: 0x1234567890abcdef,
         hashes: vec![
-            codec.hash.wrap_hashed_bytes(&[0x00; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x00; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x11; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x11; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x22; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x22; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x33; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x33; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x44; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x44; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x55; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x55; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x66; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x66; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x77; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x77; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x88; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x88; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x99; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x99; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xaa; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xaa; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xbb; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xbb; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xcc; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xcc; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xdd; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xdd; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xee; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xee; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xff; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xff; 64])
                 .expect("Expected success"),
         ],
         seals: None
@@ -849,44 +944,78 @@ fn test_round_no_seals() {
 
 #[test]
 fn test_round_seals() {
-    let mut codec: ConsensusCtlRoundCodec<_, SHA3Algo,
-                                          TestSeal, TestSealCodec> =
-        ConsensusCtlRoundCodec::create(())
-        .expect("Expected success");
+    let mut codec: ConsensusCtlRoundCodec<
+        _,
+        SHA3Algo,
+        TestSeal,
+        TestSealCodec
+    > = ConsensusCtlRoundCodec::create(()).expect("Expected success");
     let round = ConsensusCtlRound {
         round: 0x1234567890abcdef,
         hashes: vec![
-            codec.hash.wrap_hashed_bytes(&[0x00; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x00; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x11; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x11; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x22; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x22; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x33; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x33; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x44; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x44; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x55; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x55; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x66; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x66; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x77; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x77; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x88; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x88; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0x99; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0x99; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xaa; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xaa; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xbb; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xbb; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xcc; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xcc; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xdd; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xdd; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xee; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xee; 64])
                 .expect("Expected success"),
-            codec.hash.wrap_hashed_bytes(&[0xff; 64])
+            codec
+                .hash
+                .wrap_hashed_bytes(&[0xff; 64])
                 .expect("Expected success"),
         ],
         seals: Some(vec![

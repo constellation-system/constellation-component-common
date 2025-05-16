@@ -1925,6 +1925,8 @@ where
 
         if curr + payload_len < buf.len() {
             buf[curr..curr + payload_len].copy_from_slice(&req.payload[..]);
+
+            curr += payload_len
         } else {
             return Err(XactReqCodecEncodeError::TooShort);
         }
@@ -2452,10 +2454,13 @@ where
             }
         }?;
 
-        let (payload, _) = self
-            .payload_codec
-            .decode(&buf[curr..curr + req.len as usize])
-            .map_err(|err| XactReqCodecDecodeError::Payload { err: err })?;
+        let (payload, _) = if (curr + req.len as usize) < buf.len() {
+            self.payload_codec
+                .decode(&buf[curr..curr + req.len as usize])
+                .map_err(|err| XactReqCodecDecodeError::Payload { err: err })
+        } else {
+            Err(XactReqCodecDecodeError::TooShort)
+        }?;
 
         curr += req.len as usize;
 
@@ -5422,7 +5427,8 @@ where
     RoundID: Clone + Display + From<u128> + Into<u128>,
     H: Display + HashID,
     Res: Display,
-    Err: Display {
+    Err: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
@@ -5434,30 +5440,38 @@ impl<RoundID, Res, Err> Display for XactNotifyState<RoundID, Res, Err>
 where
     RoundID: Clone + Display + From<u128> + Into<u128>,
     Res: Display,
-    Err: Display {
+    Err: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), Error> {
         match self {
             XactNotifyState::Accept => write!(f, "accepted"),
-            XactNotifyState::PrecommitDispatch { when: Some(when) } =>
-                write!(f, "dispatched without commit ({})", when),
-            XactNotifyState::PrecommitDispatch { when: None } =>
-                write!(f, "dispatched without commit"),
+            XactNotifyState::PrecommitDispatch { when: Some(when) } => {
+                write!(f, "dispatched without commit ({})", when)
+            }
+            XactNotifyState::PrecommitDispatch { when: None } => {
+                write!(f, "dispatched without commit")
+            }
             XactNotifyState::Consensus => write!(f, "submitted to consensus"),
-            XactNotifyState::Commit { when } =>
-                write!(f, "committed ({})", when),
-            XactNotifyState::Dispatch { when } =>
-                write!(f, "dispatched ({})", when),
-            XactNotifyState::Success { result: Some(result), when } =>
-                write!(f, "succeeded ({}), result: {}", when, result),
-            XactNotifyState::Success { result: None, when } =>
-                write!(f, "succeeded ({})", when),
-            XactNotifyState::Error { error: Some(error) } =>
-                write!(f, "error: {}", error),
-            XactNotifyState::Error { error: None } =>
-                write!(f, "failed")
+            XactNotifyState::Commit { when } => {
+                write!(f, "committed ({})", when)
+            }
+            XactNotifyState::Dispatch { when } => {
+                write!(f, "dispatched ({})", when)
+            }
+            XactNotifyState::Success {
+                result: Some(result),
+                when
+            } => write!(f, "succeeded ({}), result: {}", when, result),
+            XactNotifyState::Success { result: None, when } => {
+                write!(f, "succeeded ({})", when)
+            }
+            XactNotifyState::Error { error: Some(error) } => {
+                write!(f, "error: {}", error)
+            }
+            XactNotifyState::Error { error: None } => write!(f, "failed")
         }
     }
 }
