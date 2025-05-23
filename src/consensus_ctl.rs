@@ -31,6 +31,7 @@ use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::hashid::HashID;
 
+use crate::generated::consensus_ctl::ConsensusCtlHeader;
 use crate::generated::consensus_ctl::ConsensusCtlRoundHeader;
 use crate::generated::consensus_ctl::ConsensusCtlSealHeader;
 use crate::generated::consensus_ctl::ConsensusCtlSubmitHeader;
@@ -47,6 +48,9 @@ const CONSENSUS_CTL_SUBMIT_HEADER_SIZE: usize = 9;
 const CONSENSUS_CTL_SUBMIT_HEADER_BITS: usize =
     CONSENSUS_CTL_SUBMIT_HEADER_SIZE * 8;
 
+const CONSENSUS_CTL_HEADER_SIZE: usize = 1051;
+const CONSENSUS_CTL_HEADER_BITS: usize = CONSENSUS_CTL_HEADER_SIZE * 8;
+
 type ConsensusCtlSubmitHeaderCodec =
     PERCodec<ConsensusCtlSubmitHeader, CONSENSUS_CTL_SUBMIT_HEADER_BITS>;
 
@@ -55,6 +59,9 @@ type ConsensusCtlRoundHeaderCodec =
 
 type ConsensusCtlSealHeaderPERCodec =
     PERCodec<ConsensusCtlSealHeader, CONSENSUS_CTL_SEAL_HEADER_BITS>;
+
+type ConsensusCtlHeaderPERCodec =
+    PERCodec<ConsensusCtlHeader, CONSENSUS_CTL_HEADER_BITS>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ConsensusCtlRound<RoundID, H, Seal>
@@ -76,6 +83,16 @@ where
     hashes: Vec<H>
 }
 
+// XXX this is temporary, because we can't do asymmetric buses yet.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ConsensusCtl<RoundID, H, Seal>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: HashID {
+    Round(ConsensusCtlRound<RoundID, H, Seal>),
+    Submit(ConsensusCtlSubmit<H>)
+}
+
 #[derive(Clone)]
 pub struct ConsensusCtlSubmitCodec<H>
 where
@@ -93,6 +110,21 @@ where
     round: PhantomData<RoundID>,
     seal: PhantomData<Seal>,
     header_codec: ConsensusCtlRoundHeaderCodec,
+    seal_header_codec: ConsensusCtlSealHeaderPERCodec,
+    seal_codec: SealCodec,
+    hash: H
+}
+
+// XXX temporary because we can't do asymmetric buses yet.
+#[derive(Clone)]
+pub struct ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: HashAlgo,
+    SealCodec: Codec<Seal> {
+    round: PhantomData<RoundID>,
+    seal: PhantomData<Seal>,
+    header_codec: ConsensusCtlHeaderPERCodec,
     seal_header_codec: ConsensusCtlSealHeaderPERCodec,
     seal_codec: SealCodec,
     hash: H
@@ -532,6 +564,278 @@ where
         };
 
         Ok((out, curr))
+    }
+}
+
+impl<RoundID, H, Seal, SealCodec> Codec<ConsensusCtl<RoundID, H::HashID, Seal>>
+    for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    SealCodec: Codec<Seal>
+{
+    type CreateError = SealCodec::CreateError;
+    type DecodeError =
+        ConsensusCtlRoundDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError,
+            SealCodec::DecodeError
+        >;
+    type EncodeError =
+        ConsensusCtlRoundEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Codec<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError,
+            SealCodec::EncodeError
+        >;
+    type Param = SealCodec::Param;
+
+    #[inline]
+    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+        let seal_codec = SealCodec::create(param)?;
+
+        Ok(ConsensusCtlCodec {
+            round: PhantomData,
+            seal: PhantomData,
+            seal_header_codec: ConsensusCtlSealHeaderPERCodec::default(),
+            header_codec: ConsensusCtlHeaderPERCodec::default(),
+            seal_codec: seal_codec,
+            hash: H::default()
+        })
+    }
+
+    #[inline]
+    fn buf_size(
+        &self,
+        val: &ConsensusCtl<RoundID, H::HashID, Seal>
+    ) -> usize {
+        match val {
+            ConsensusCtl::Round(val) => {
+                let round = 16;
+                let hashes = (val.hashes.len() * 64) + 2;
+                let seals = if let Some(seals) = &val.seals {
+                    let mut len = 9;
+
+                    for seal in seals.iter() {
+                        len += self.seal_codec.buf_size(seal)
+                    }
+
+                    len
+                } else {
+                    1
+                };
+
+                hashes + seals + round
+            }
+            ConsensusCtl::Submit(val) => {
+                let hashes = val.hashes.len() * 64;
+
+                hashes + 9
+            }
+        }
+    }
+
+    fn encode(
+        &mut self,
+        val: &ConsensusCtl<RoundID, H::HashID, Seal>,
+        buf: &mut [u8]
+    ) -> Result<usize, Self::EncodeError> {
+        match val {
+            ConsensusCtl::Round(val) => {
+                let round: u128 = val.round.clone().into();
+                let round = round.to_le_bytes().to_vec();
+                let hashes = val
+                    .hashes
+                    .iter()
+                    .map(|hash| hash.bytes().to_vec())
+                    .collect();
+                let nseals = val.seals.as_ref().map_or(0, |seals| seals.len());
+                let header = ConsensusCtlRoundHeader {
+                    round: round,
+                    hashes: hashes,
+                    nseals: nseals as u64
+                };
+                let header = ConsensusCtlHeader::Round(header);
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| ConsensusCtlRoundEncodeError::Header {
+                        err: err
+                    })?;
+
+                if let Some(seals) = &val.seals {
+                    for seal in seals.iter() {
+                        let seal = self
+                            .seal_codec
+                            .encode_to_vec(seal)
+                            .map_err(|err| {
+                                ConsensusCtlRoundEncodeError::Seal { err: err }
+                            })?;
+                        let seal_len = seal.len();
+                        let header = ConsensusCtlSealHeader {
+                            len: seal_len as u64
+                        };
+
+                        curr += self
+                            .seal_header_codec
+                            .encode(&header, &mut buf[curr..])
+                            .map_err(|err| {
+                                ConsensusCtlRoundEncodeError::Header {
+                                    err: err
+                                }
+                            })?;
+
+                        if curr + seal_len < buf.len() {
+                            buf[curr..curr + seal_len]
+                                .copy_from_slice(&seal[..]);
+
+                            curr += seal_len;
+                        } else {
+                            return Err(ConsensusCtlRoundEncodeError::TooShort);
+                        }
+                    }
+                }
+
+                Ok(curr)
+            }
+            ConsensusCtl::Submit(val) => {
+                let nhashes = val.hashes.len();
+                let header = ConsensusCtlSubmitHeader {
+                    nhashes: nhashes as u64
+                };
+                let header = ConsensusCtlHeader::Submit(header);
+                let hashes_len = nhashes * 64;
+                let mut curr = 0;
+
+                curr += self
+                    .header_codec
+                    .encode(&header, &mut buf[curr..])
+                    .map_err(|err| ConsensusCtlRoundEncodeError::Header {
+                        err: err
+                    })?;
+
+                if curr + hashes_len < buf.len() {
+                    for hash in val.hashes.iter() {
+                        buf[curr..curr + 64].copy_from_slice(hash.bytes());
+
+                        curr += 64;
+                    }
+                } else {
+                    return Err(ConsensusCtlRoundEncodeError::TooShort);
+                }
+
+                Ok(curr)
+            }
+        }
+    }
+
+    fn decode(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<
+        (ConsensusCtl<RoundID, H::HashID, Seal>, usize),
+        Self::DecodeError
+    > {
+        let mut curr = 0;
+        let (header, nbytes) = self
+            .header_codec
+            .decode(&buf[curr..])
+            .map_err(|err| ConsensusCtlRoundDecodeError::Header { err: err })?;
+
+        curr += nbytes;
+
+        match header {
+            ConsensusCtlHeader::Round(header) => {
+                let round = header.round.clone().try_into().map_err(|err| {
+                    ConsensusCtlRoundDecodeError::Round { err: err }
+                })?;
+                let round = u128::from_le_bytes(round);
+                let round = round.into();
+                let mut hashes = Vec::with_capacity(header.hashes.len());
+
+                for hash in header.hashes.iter() {
+                    let hash =
+                        self.hash.wrap_hashed_bytes(hash).map_err(|err| {
+                            ConsensusCtlRoundDecodeError::Hash { err: err }
+                        })?;
+
+                    hashes.push(hash);
+                }
+
+                let nseals = header.nseals as usize;
+
+                let out = if nseals != 0 {
+                    let mut seals = Vec::with_capacity(nseals);
+
+                    for _ in 0..nseals {
+                        let (header, nbytes) = self
+                            .seal_header_codec
+                            .decode(&buf[curr..])
+                            .map_err(|err| {
+                                ConsensusCtlRoundDecodeError::Header {
+                                    err: err
+                                }
+                            })?;
+
+                        curr += nbytes;
+
+                        let (seal, nbytes) = self
+                            .seal_codec
+                            .decode(&buf[curr..curr + header.len as usize])
+                            .map_err(|err| {
+                                ConsensusCtlRoundDecodeError::Seal { err: err }
+                            })?;
+
+                        curr += nbytes;
+                        seals.push(seal)
+                    }
+
+                    ConsensusCtlRound {
+                        round: round,
+                        hashes: hashes,
+                        seals: Some(seals)
+                    }
+                } else {
+                    ConsensusCtlRound {
+                        round: round,
+                        hashes: hashes,
+                        seals: None
+                    }
+                };
+                let out = ConsensusCtl::Round(out);
+
+                Ok((out, curr))
+            }
+            ConsensusCtlHeader::Submit(header) => {
+                let nhashes = header.nhashes as usize;
+                let hashes_len = nhashes * 64;
+                let mut hashes = Vec::with_capacity(nhashes);
+
+                if curr + hashes_len < buf.len() {
+                    for _ in 0..nhashes {
+                        let hash = self
+                            .hash
+                            .wrap_hashed_bytes(&buf[curr..curr + 64])
+                            .map_err(|err| {
+                                ConsensusCtlRoundDecodeError::Hash { err: err }
+                            })?;
+
+                        hashes.push(hash);
+                        curr += 64;
+                    }
+                } else {
+                    return Err(ConsensusCtlRoundDecodeError::TooShort);
+                }
+
+                let out = ConsensusCtlSubmit { hashes: hashes };
+                let out = ConsensusCtl::Submit(out);
+
+                Ok((out, curr))
+            }
+        }
     }
 }
 

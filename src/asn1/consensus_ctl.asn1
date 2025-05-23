@@ -29,4 +29,10 @@ ConsensusCtlSubmitHeader ::= SEQUENCE {
     nhashes INTEGER
 }
 
+-- XXX This is temporary, because we can't do asymmetric channels yet.
+ConsensusCtlHeader ::= CHOICE {
+    Submit ConsensusCtlSubmitHeader,
+    Round ConsensusCtlRoundHeader
+}
+
 END
