@@ -467,7 +467,7 @@ where
         + Sync
 {
     pub fn create(
-        self_party: SessionAuth::Prin,
+        self_party: Option<SessionAuth::Prin>,
         config: MulticastDatagramBusConfig<
             SessionAuth::Prin,
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
@@ -572,9 +572,9 @@ where
 
                     debug!(target: "multicast-bus",
                            "creating stream for party {}",
-                           self_party);
+                           party);
 
-                    if party != self_party {
+                    if self_party.as_ref() != Some(&party) {
                         let mut stream = StreamSelector::<
                             Epochs,
                             FarChannelRegistryChannels<
@@ -603,10 +603,6 @@ where
                             MulticastDatagramBusRunError::Refresh { err: err }
                         })?;
                         party_streams.push((party, frags, stream))
-                    } else {
-                        debug!(target: "multicast-bus",
-                               "skipping self-party {}",
-                               self_party)
                     }
                 }
 

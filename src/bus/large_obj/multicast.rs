@@ -211,7 +211,6 @@ pub struct MulticastLargeObjBus<
         + NSNameCachesCtx
         + Send
         + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
     Endpoint: 'static + Send,
     Resolver: 'static
         + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
@@ -555,7 +554,6 @@ where
         + NSNameCachesCtx
         + Send
         + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
     Endpoint: 'static + Send,
     Resolver: 'static
         + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
@@ -571,7 +569,7 @@ where
         + Sync
 {
     pub fn create(
-        self_party: SessionAuth::Prin,
+        self_party: Option<SessionAuth::Prin>,
         config: MulticastLargeObjBusConfig<
             SessionAuth::Prin,
             ChannelRegistryChannelsConfig<
@@ -692,9 +690,9 @@ where
 
                     debug!(target: "multicast-bus",
                            "creating stream for party {}",
-                           self_party);
+                           party);
 
-                    if party != self_party {
+                    if self_party.as_ref() != Some(&party) {
                         let mut stream = StreamSelector::<
                             Epochs,
                             FarChannelRegistryChannels<
@@ -729,10 +727,6 @@ where
                             MulticastLargeObjBusRunError::Refresh { err: err }
                         })?;
                         party_streams.push((party, frags, stream))
-                    } else {
-                        debug!(target: "multicast-bus",
-                               "skipping self-party {}",
-                               self_party)
                     }
                 }
 
