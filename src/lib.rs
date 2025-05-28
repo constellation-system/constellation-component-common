@@ -23,9 +23,11 @@
 
 pub mod bus;
 pub mod config;
+pub mod consensus_ctl;
 pub mod xact;
 
 #[allow(clippy::all)]
+#[allow(warnings)]
 #[rustfmt::skip]
 mod generated;
 

@@ -1,14 +1,278 @@
 Xact DEFINITIONS AUTOMATIC TAGS ::=
 BEGIN
 
-XactReqHeader ::= SEQUENCE {
-    hash OCTET STRING SIZE (64),
+IMPORTS Version FROM Version;
+
+-- Point in logical time at which an operation will take place
+-- (linearization point).
+--
+-- This consists of a consensus round, and an index within that round.
+XactLinPoint ::= SEQUENCE {
+    -- The consensus round ID.
+    round OCTET STRING SIZE (16),
+    -- Index within the consensus round.
+    idx INTEGER (0..15),
+}
+
+-- Selections of kinds of notifications to receive.
+XactNotifySelections ::= SEQUENCE {
+    -- Send notifications when a transaction is accepted.
+    accept BOOLEAN,
+    -- Send notifications when a transaction is dispatched for execution
+    -- prior to consensus
+    precommit_dispatch BOOLEAN,
+    -- Send notifications when a transaction is submitted to consensus.
+    consensus BOOLEAN,
+    -- Send notifications when a transaction is committed by a consensus pool.
+    commit BOOLEAN,
+    -- Send notifications when a transaction is dispatched for execution
+    -- after being committed.
+    dispatch BOOLEAN,
+    -- Send full completion notifications, containing result or error data.
+    full_finish BOOLEAN
+}
+
+-- Header for effects constraint data.
+--
+-- The actual effects data follows this, if a length is given.
+XactEffectsHeader ::= SEQUENCE {
+    -- Whether or not this represents a hard constraint.
+    hard BOOLEAN,
+    -- Length of the effects data.
+    --
+    -- This is stored separately from the PER header encoding, and immediately
+    -- follows it.
     len INTEGER
 }
 
+XactHardNone ::= SEQUENCE {
+    when XactLinPoint OPTIONAL
+}
+
+-- Effect constraints on an uncommitted transaction.
+--
+-- This can include a linearization point only for hard no-effect
+-- transactions.
+XactUncommittedEffectsHeader ::= CHOICE {
+    -- Effectful transaction.
+    --
+    -- This will include a description of the effects.
+    Effects XactEffectsHeader,
+    -- Hard no-effect constraint.
+    --
+    -- This can optionally include a linearization point for the transaction,
+    -- as it is a read-only request.
+    HardNone XactHardNone,
+    -- Soft no-effect constraint.
+    --
+    -- This cannot set a linearization point.
+    SoftNone NULL
+}
+
+-- Header for an uncommitted transaction request.
+--
+-- The request data follows this header, then the effect data if present.
+XactUncommittedReqHeader ::= SEQUENCE {
+    -- Class of the request.
+    --
+    -- This is a serialized UUID.
+    class OCTET STRING SIZE(16),
+    -- Version of the transaction class.
+    version Version,
+    -- Instance ID of the transaction class, if applicable.
+    instance INTEGER,
+    -- Effects constraints on the request.
+    effects XactUncommittedEffectsHeader,
+    -- Length of the payload data.
+    len INTEGER
+}
+
+-- Header for an authorization seal.
+--
+-- The seal data should follow all of the data of this header (including the
+-- payload and effect data of the contained request).  This header should also
+-- follow whatever object is authorized by this seal.
+XactSealHeader ::= SEQUENCE {
+    -- Length of the authorization seal data.
+    len INTEGER,
+}
+
+-- Header for a committed transaction request.
+--
+-- The request data follows this header, then the effect data if present.
+XactCommittedReqHeader ::= SEQUENCE {
+    -- Class of the request.
+    --
+    -- This is a serialized UUID.
+    class OCTET STRING SIZE(16),
+    -- Version of the transaction class.
+    version Version,
+    -- Instance ID of the transaction class, if applicable.
+    instance INTEGER,
+    -- Round index in at which this transaction takes place.
+    idx INTEGER (0..15),
+    -- Effects constraints on the request.
+    --
+    -- If not present, the transaction had a soft no-effect constraint,
+    -- but violated it during preliminary execution.
+    effects XactEffectsHeader OPTIONAL,
+    -- Length of the request data that follows this header.
+    len INTEGER
+}
+
+-- Header for an committed transaction request.
+--
+-- The seal data should follow all of the data of this header (including the
+-- payload and effect data of the contained request).
+XactSealedCommittedReqHeader ::= SEQUENCE {
+    -- Length of the authorization seal data, if present.
+    --
+    -- The seal should be computed against the hash field of the request.
+    seal INTEGER OPTIONAL,
+    -- The request.
+    req XactCommittedReqHeader
+}
+
+-- Header for a consensus seal.
+XactConsensusSealHeader ::= SEQUENCE {
+    -- Hashes in the consensus round.
+    hashes SEQUENCE SIZE (1..16) OF OCTET STRING SIZE (64),
+    -- Length of the consensus seal data.
+    --
+    -- Consensus seals will generally consist of enough cryptographic
+    -- signatures by consensus parties to form a quorum.  The formats of
+    -- these will vary.
+    --
+    -- Cryptographic signatures will be computed by first adding the round ID,
+    -- then the hashes that comprise the round.  Note that the round ID is
+    -- stored outside this structure.
+    --
+    -- This data will be stored separately from the header.
+    nseals INTEGER
+}
+
+-- Header for a committed consensus round.
+--
+-- This will contain one or more XactCommittedReqHeaders and associated
+-- data, followed by XactSealHeaders, which were part of the committed round.
+--
+-- Since XactCommittedReqHeaders contain a round index, the order in which they
+-- occur here does not matter; they must be reordered acconding to their round
+-- indexes.
+XactCommittedRoundHeader ::= SEQUENCE {
+    -- Round ID of the transaction.
+    round OCTET STRING SIZE(16),
+    -- Consensus seal, if present.
+    --
+    -- There will also be additional data holding the signatures comprising
+    -- the seal.  This data should preceed all request headers and data.
+    seal XactConsensusSealHeader OPTIONAL,
+    -- Number of request headers that follow this header.
+    --
+    -- Because request headers contain cryptographic hashes, they must be
+    -- byte-aligned.  Thus they must be encoded separately for PER encodings.
+    nreqs INTEGER (1..16)
+}
+
+-- Header for a transaction request result.
+--
+-- The actual result data follows this header.
+XactValueHeader ::= SEQUENCE {
+    len INTEGER
+}
+
+-- Header for a transaction request application-specific error.
+--
+-- The actual error data follows this header.
+XactErrorHeader ::= CHOICE {
+    -- An application-level error occurred.
+    --
+    -- The integer specifies the length of the application-specific data.
+    Error XactValueHeader,
+    -- The transaction class ID provided is not supported.
+    UnknownClass NULL,
+    -- The version of the transaction class provided is not supported.
+    UnknownVersion NULL,
+    -- The instance ID of the transaction class is not known.
+    UnknownInstance NULL,
+    -- An error occurred parsing the payload data.
+    InvalidPayload NULL,
+    -- An error occurred parsing the effect data.
+    InvalidEffect NULL,
+    -- The transaction request violated a hard effect constraint.
+    EffectViolation NULL,
+    -- The transaction request failed authorization.
+    Unauthorized NULL,
+    -- The transaction is uncommitted, but produces effects.
+    Uncommitted NULL,
+    -- The transaction's hash does not match the hash in a seal.
+    HashMismatch NULL,
+    -- An internal error occurred.
+    Internal NULL
+}
+
+-- Header for a transaction result.
+XactResultHeader ::= SEQUENCE {
+    -- Linearization point for when this occurred.
+    when XactLinPoint,
+    -- Length of result data.
+    len INTEGER
+}
+
+-- Information about a consensus result.
+XactPrecommitState ::= SEQUENCE {
+    -- Linearization point assigned by the consensus round.
+    when XactLinPoint OPTIONAL
+}
+
+-- Information about a consensus result.
+XactCommitState ::= SEQUENCE {
+    -- Linearization point assigned by the consensus round.
+    when XactLinPoint
+}
+
+-- Notifications about the state of a transaction request.
+XactNotifyStateHeader ::= CHOICE {
+    -- The request has been accepted by a peer.
+    Accept NULL,
+    -- The request has been dispatched for execution prior to consensus.
+    PrecommitDispatch XactPrecommitState,
+    -- The request has been submitted to a consensus pool.
+    Consensus NULL,
+    -- A batch containing the request has been comitted by the consensus pool.
+    Commit XactCommitState,
+    -- The request has been dispatched to a processor.
+    Dispatch XactCommitState,
+    -- The request has been completed.
+    Success XactResultHeader,
+    -- The request failed with an error.
+    Error XactErrorHeader,
+    -- The request completed successfully.  No result data accompanies this.
+    Finished XactCommitState,
+    -- The request failed with an error.  No error data accompanies this.
+    Fail NULL
+}
+
+-- Full notifications about a transaction request.
+XactNotifyHeader ::= SEQUENCE {
+    -- Hash of the original request.
+    hash OCTET STRING SIZE (64),
+    -- State of the transaction request.
+    state XactNotifyStateHeader
+}
+
+-- Header for a batch.
+--
+-- Additional data may follow this, with committed rounds coming first,
+-- then reuests, then results.
 XactBatchHeader ::= SEQUENCE {
-    seqnum INTEGER,
-    nreqs INTEGER (0..16777215)
+    -- Number of XactCommittedRoundHeaders that follow this header.
+    ncommitted INTEGER (0..16777215),
+    -- Number of XactSealedUncommittedReqHeaders that follow the commited
+    -- round headers.
+    nreqs INTEGER (0..16777215),
+    -- All notifications.
+    nnotifies INTEGER (0..16777215)
 }
 
 END

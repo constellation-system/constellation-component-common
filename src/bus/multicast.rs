@@ -18,9 +18,9 @@
 
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use std::vec::IntoIter;
@@ -467,7 +467,7 @@ where
         + Sync
 {
     pub fn create(
-        self_party: SessionAuth::Prin,
+        self_party: Option<SessionAuth::Prin>,
         config: MulticastDatagramBusConfig<
             SessionAuth::Prin,
             ChannelRegistryChannelsConfig<MsgCodec::Param>,
@@ -572,9 +572,9 @@ where
 
                     debug!(target: "multicast-bus",
                            "creating stream for party {}",
-                           self_party);
+                           party);
 
-                    if party != self_party {
+                    if self_party.as_ref() != Some(&party) {
                         let mut stream = StreamSelector::<
                             Epochs,
                             FarChannelRegistryChannels<
@@ -603,10 +603,6 @@ where
                             MulticastDatagramBusRunError::Refresh { err: err }
                         })?;
                         party_streams.push((party, frags, stream))
-                    } else {
-                        debug!(target: "multicast-bus",
-                               "skipping self-party {}",
-                               self_party)
                     }
                 }
 
@@ -670,22 +666,22 @@ where
 
     /// Consume this `MulticastDatagramBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> MulticastDatagramBusCleanup {
+    pub fn start(self) -> Result<MulticastDatagramBusCleanup, Error> {
         let MulticastDatagramBus {
             pull,
             push,
             reporter,
             ..
         } = self;
-        let pull_join = pull.start(reporter);
+        let pull_join = pull.start(reporter)?;
         let notify = push.notify();
-        let sender_join = push.start();
+        let sender_join = push.start()?;
 
-        MulticastDatagramBusCleanup {
+        Ok(MulticastDatagramBusCleanup {
             notify: notify,
             sender_join: sender_join,
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -729,7 +725,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             MulticastDatagramBusRunError::Acquire { err } => err.fmt(f),
             MulticastDatagramBusRunError::MsgCodec { err } => err.fmt(f),

@@ -17,9 +17,9 @@
 // <https://www.gnu.org/licenses/>.
 
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 
@@ -534,13 +534,13 @@ where
 
     /// Consume this `DispatchDatagramBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> DispatchDatagramBusCleanup {
+    pub fn start(self) -> Result<DispatchDatagramBusCleanup, Error> {
         let DispatchDatagramBus { pull } = self;
-        let pull_join = pull.start();
+        let pull_join = pull.start()?;
 
-        DispatchDatagramBusCleanup {
+        Ok(DispatchDatagramBusCleanup {
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -749,7 +749,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             DispatchError::Session { err } => err.fmt(f),
             DispatchError::Stream { err } => err.fmt(f)
@@ -766,7 +766,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             DispatchDatagramBusCreateError::MsgCodec { err } => err.fmt(f),
             DispatchDatagramBusCreateError::Acquire { err } => err.fmt(f)

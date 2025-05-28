@@ -1,4 +1,6 @@
+use std::fs::File;
 use std::io::Result;
+use std::io::Write;
 use std::path::Path;
 
 use asn1rs::converter::Converter;
@@ -31,6 +33,8 @@ fn load_files(
     Ok(())
 }
 
+const VERSION_IMPORT: &str = "pub use constellation_common::version::Version;";
+
 pub fn main() {
     let mut converter = Converter::default();
 
@@ -50,5 +54,15 @@ pub fn main() {
         })
     {
         panic!("Error generating rust: {:?}", e);
+    }
+
+    // XXX workaround to asn1rs' inability to have explicit tags.
+    match File::create(Path::new("src/generated/version.rs")) {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", VERSION_IMPORT) {
+                panic!("Error generating rust import: {:?}", e)
+            }
+        }
+        Err(e) => panic!("Error generating rust import: {:?}", e)
     }
 }

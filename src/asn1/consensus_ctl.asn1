@@ -1,0 +1,38 @@
+ConsensusCtl DEFINITIONS AUTOMATIC TAGS ::=
+BEGIN
+
+ConsensusCtlSealHeader ::= SEQUENCE {
+    -- Length of the authorization seal data.
+    len INTEGER,
+}
+
+ConsensusCtlRoundHeader ::= SEQUENCE {
+    -- The consensus round ID.
+    round OCTET STRING SIZE (16),
+    -- Hashes in the consensus round.
+    hashes SEQUENCE SIZE (1..16) OF OCTET STRING SIZE (64),
+    -- Length of the consensus seal data.
+    --
+    -- Consensus seals will generally consist of enough cryptographic
+    -- signatures by consensus parties to form a quorum.  The formats of
+    -- these will vary.
+    --
+    -- Cryptographic signatures will be computed by first adding the round ID,
+    -- then the hashes that comprise the round.  Note that the round ID is
+    -- stored outside this structure.
+    --
+    -- This data will be stored separately from the header.
+    nseals INTEGER
+}
+
+ConsensusCtlSubmitHeader ::= SEQUENCE {
+    nhashes INTEGER
+}
+
+-- XXX This is temporary, because we can't do asymmetric channels yet.
+ConsensusCtlHeader ::= CHOICE {
+    Submit ConsensusCtlSubmitHeader,
+    Round ConsensusCtlRoundHeader
+}
+
+END

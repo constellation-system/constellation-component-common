@@ -17,9 +17,9 @@
 // <https://www.gnu.org/licenses/>.
 
 use std::fmt::Display;
-use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 
@@ -675,13 +675,13 @@ where
 
     /// Consume this `DispatchLargeObjBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> DispatchLargeObjBusCleanup {
+    pub fn start(self) -> Result<DispatchLargeObjBusCleanup, Error> {
         let DispatchLargeObjBus { pull } = self;
-        let pull_join = pull.start();
+        let pull_join = pull.start()?;
 
-        DispatchLargeObjBusCleanup {
+        Ok(DispatchLargeObjBusCleanup {
             pull_join: pull_join
-        }
+        })
     }
 }
 
@@ -956,7 +956,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             DispatchError::Session { err } => err.fmt(f),
             DispatchError::Stream { err } => err.fmt(f)
@@ -973,7 +973,7 @@ where
     fn fmt(
         &self,
         f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::fmt::Error> {
         match self {
             DispatchLargeObjBusCreateError::MsgCodec { err } => err.fmt(f),
             DispatchLargeObjBusCreateError::Acquire { err } => err.fmt(f)
