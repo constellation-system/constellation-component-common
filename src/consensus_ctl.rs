@@ -25,7 +25,9 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 
 use constellation_common::codec::per::PERCodec;
-use constellation_common::codec::Codec;
+use constellation_common::codec::Encoder;
+use constellation_common::codec::Decoder;
+use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
@@ -105,8 +107,7 @@ where
 pub struct ConsensusCtlRoundCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
-    H: HashAlgo,
-    SealCodec: Codec<Seal> {
+    H: HashAlgo {
     round: PhantomData<RoundID>,
     seal: PhantomData<Seal>,
     header_codec: ConsensusCtlRoundHeaderCodec,
@@ -120,8 +121,7 @@ where
 pub struct ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
-    H: HashAlgo,
-    SealCodec: Codec<Seal> {
+    H: HashAlgo {
     round: PhantomData<RoundID>,
     seal: PhantomData<Seal>,
     header_codec: ConsensusCtlHeaderPERCodec,
@@ -271,32 +271,32 @@ where
     }
 }
 
-impl<H> Codec<ConsensusCtlSubmit<H::HashID>> for ConsensusCtlSubmitCodec<H>
+impl<H> Create for ConsensusCtlSubmitCodec<H>
 where
     H: Default + HashAlgo
 {
     type CreateError = Infallible;
-    type DecodeError =
-        ConsensusCtlSubmitDecodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        ConsensusCtlSubmitEncodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::EncodeError
-        >;
-    type Param = ();
+    type Config = ();
 
     #[inline]
-    fn create(_param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(_param: Self::Config) -> Result<Self, Self::CreateError> {
         Ok(ConsensusCtlSubmitCodec {
             header_codec: ConsensusCtlSubmitHeaderCodec::default(),
             hash: H::default()
         })
     }
+}
+
+impl<H> Encoder<ConsensusCtlSubmit<H::HashID>> for ConsensusCtlSubmitCodec<H>
+where
+    H: Default + HashAlgo
+{
+    type EncodeError =
+        ConsensusCtlSubmitEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Encoder<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -339,6 +339,18 @@ where
 
         Ok(curr)
     }
+}
+
+impl<H> Decoder<ConsensusCtlSubmit<H::HashID>> for ConsensusCtlSubmitCodec<H>
+where
+    H: Default + HashAlgo
+{
+    type DecodeError =
+        ConsensusCtlSubmitDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Decoder<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -378,33 +390,18 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec>
-    Codec<ConsensusCtlRound<RoundID, H::HashID, Seal>>
+impl<RoundID, H, Seal, SealCodec> Create
     for ConsensusCtlRoundCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Default + HashAlgo,
-    SealCodec: Codec<Seal>
+    SealCodec: Create
 {
     type CreateError = SealCodec::CreateError;
-    type DecodeError =
-        ConsensusCtlRoundDecodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::DecodeError,
-            SealCodec::DecodeError
-        >;
-    type EncodeError =
-        ConsensusCtlRoundEncodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::EncodeError,
-            SealCodec::EncodeError
-        >;
-    type Param = SealCodec::Param;
+    type Config = SealCodec::Config;
 
     #[inline]
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let seal_codec = SealCodec::create(param)?;
 
         Ok(ConsensusCtlRoundCodec {
@@ -416,6 +413,23 @@ where
             hash: H::default()
         })
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Encoder<ConsensusCtlRound<RoundID, H::HashID, Seal>>
+    for ConsensusCtlRoundCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    SealCodec: Encoder<Seal>
+{
+    type EncodeError =
+        ConsensusCtlRoundEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Encoder<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError,
+            SealCodec::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -494,6 +508,23 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Decoder<ConsensusCtlRound<RoundID, H::HashID, Seal>>
+    for ConsensusCtlRoundCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    SealCodec: Decoder<Seal>
+{
+    type DecodeError =
+        ConsensusCtlRoundDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Decoder<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError,
+            SealCodec::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -567,32 +598,18 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec> Codec<ConsensusCtl<RoundID, H::HashID, Seal>>
+impl<RoundID, H, Seal, SealCodec> Create
     for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Default + HashAlgo,
-    SealCodec: Codec<Seal>
+    SealCodec: Create
 {
     type CreateError = SealCodec::CreateError;
-    type DecodeError =
-        ConsensusCtlRoundDecodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::DecodeError,
-            SealCodec::DecodeError
-        >;
-    type EncodeError =
-        ConsensusCtlRoundEncodeError<
-            <ConsensusCtlSubmitHeaderCodec as Codec<
-                ConsensusCtlSubmitHeader
-            >>::EncodeError,
-            SealCodec::EncodeError
-        >;
-    type Param = SealCodec::Param;
+    type Config = SealCodec::Config;
 
     #[inline]
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let seal_codec = SealCodec::create(param)?;
 
         Ok(ConsensusCtlCodec {
@@ -604,6 +621,22 @@ where
             hash: H::default()
         })
     }
+}
+
+impl<RoundID, H, Seal, SealCodec> Encoder<ConsensusCtl<RoundID, H::HashID, Seal>>
+    for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    SealCodec: Encoder<Seal>
+{
+    type EncodeError =
+        ConsensusCtlRoundEncodeError<
+            <ConsensusCtlSubmitHeaderCodec as Encoder<
+                ConsensusCtlSubmitHeader
+            >>::EncodeError,
+            SealCodec::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -731,6 +764,22 @@ where
             }
         }
     }
+}
+
+impl<RoundID, H, Seal, SealCodec> Decoder<ConsensusCtl<RoundID, H::HashID, Seal>>
+    for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    SealCodec: Decoder<Seal>
+{
+    type DecodeError =
+        ConsensusCtlRoundDecodeError<
+            <ConsensusCtlSubmitHeaderCodec as Decoder<
+                ConsensusCtlSubmitHeader
+            >>::DecodeError,
+            SealCodec::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -991,16 +1040,19 @@ pub struct TestSeal {
 pub struct TestSealCodec;
 
 #[cfg(test)]
-impl Codec<TestSeal> for TestSealCodec {
+impl Create for TestSealCodec {
     type CreateError = Infallible;
-    type DecodeError = Infallible;
-    type EncodeError = Infallible;
-    type Param = ();
+    type Config = ();
 
     #[inline]
     fn create(_param: ()) -> Result<Self, Infallible> {
         Ok(TestSealCodec)
     }
+}
+
+#[cfg(test)]
+impl Encoder<TestSeal> for TestSealCodec {
+    type EncodeError = Infallible;
 
     #[inline]
     fn buf_size(
@@ -1022,6 +1074,11 @@ impl Codec<TestSeal> for TestSealCodec {
 
         Ok(len)
     }
+}
+
+#[cfg(test)]
+impl Decoder<TestSeal> for TestSealCodec {
+    type DecodeError = Infallible;
 
     #[inline]
     fn decode(

@@ -27,7 +27,9 @@ use std::iter::once;
 use std::marker::PhantomData;
 
 use constellation_common::codec::per::PERCodec;
-use constellation_common::codec::Codec;
+use constellation_common::codec::Decoder;
+use constellation_common::codec::Encoder;
+use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
@@ -349,9 +351,7 @@ pub struct XactUncommittedReqCodec<
     PayloadCodec,
     EffectCodec
 > where
-    RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect> {
+    RoundID: Clone + From<u128> + Into<u128> {
     payload: PhantomData<Payload>,
     effect: PhantomData<Effect>,
     round: PhantomData<RoundID>,
@@ -376,9 +376,7 @@ pub struct XactUncommittedReqHashCodec<
 > where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashAlgo,
-    H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect> {
+    H::HashID: Clone {
     payload: PhantomData<Payload>,
     effect: PhantomData<Effect>,
     round: PhantomData<RoundID>,
@@ -409,10 +407,7 @@ where
 ///
 /// This is typically used by clients and processors.
 #[derive(Clone)]
-pub struct XactCommittedReqCodec<Payload, Effect, PayloadCodec, EffectCodec>
-where
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect> {
+pub struct XactCommittedReqCodec<Payload, Effect, PayloadCodec, EffectCodec> {
     payload: PhantomData<Payload>,
     effect: PhantomData<Effect>,
     req_codec: XactCommittedReqHeaderPERCodec,
@@ -433,10 +428,7 @@ pub struct XactCommittedRoundCodec<
 > where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashAlgo,
-    H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
-    SealCodec: Codec<Seal> {
+    H::HashID: Clone {
     payload: PhantomData<Payload>,
     effect: PhantomData<Effect>,
     seal: PhantomData<Seal>,
@@ -454,8 +446,7 @@ pub struct XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashAlgo,
-    H::HashID: Clone,
-    SealCodec: Codec<Seal> {
+    H::HashID: Clone {
     seal: PhantomData<Seal>,
     round: PhantomData<RoundID>,
     header_codec: XactCommittedRoundHeaderPERCodec,
@@ -466,10 +457,7 @@ where
 }
 
 #[derive(Clone)]
-pub struct XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
-where
-    InnerCodec: Codec<Inner>,
-    SealCodec: Codec<Seal> {
+pub struct XactSealedCodec<Seal, Inner, SealCodec, InnerCodec> {
     inner: PhantomData<Inner>,
     seal: PhantomData<Seal>,
     header_codec: XactSealHeaderPERCodec,
@@ -478,9 +466,7 @@ where
 }
 
 #[derive(Clone)]
-pub struct XactSealedBlobCodec<Inner, InnerCodec>
-where
-    InnerCodec: Codec<Inner> {
+pub struct XactSealedBlobCodec<Inner, InnerCodec> {
     inner: PhantomData<Inner>,
     header_codec: XactSealHeaderPERCodec,
     inner_codec: InnerCodec
@@ -491,9 +477,7 @@ pub struct XactNotifyCodec<RoundID, H, Res, Err, ResCodec, ErrCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashAlgo,
-    H::HashID: Clone,
-    ResCodec: Codec<Res>,
-    ErrCodec: Codec<Err> {
+    H::HashID: Clone {
     round: PhantomData<RoundID>,
     res: PhantomData<Res>,
     err: PhantomData<Err>,
@@ -531,12 +515,7 @@ pub struct XactBatchCodec<
 > where
     RoundID: Clone + From<u128> + Into<u128>,
     H: HashAlgo,
-    H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
-    SealCodec: Codec<Seal>,
-    ResCodec: Codec<Res>,
-    ErrCodec: Codec<Err> {
+    H::HashID: Clone {
     header_codec: XactBatchHeaderPERCodec,
     committed_codec: XactCommittedRoundCodec<
         RoundID,
@@ -580,12 +559,7 @@ pub struct XactBatchHashCodec<
 > where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Default + HashAlgo,
-    H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
-    SealCodec: Codec<Seal>,
-    ResCodec: Codec<Res>,
-    ErrCodec: Codec<Err> {
+    H::HashID: Clone {
     header_codec: XactBatchHeaderPERCodec,
     committed_codec: XactCommittedRoundCodec<
         RoundID,
@@ -618,8 +592,7 @@ pub struct XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Clone + Default + HashAlgo,
-    H::HashID: Clone,
-    SealCodec: Codec<Seal> {
+    H::HashID: Clone {
     header_codec: XactBatchHeaderPERCodec,
     committed_codec: XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>,
     req_codec: XactSealedCodec<
@@ -1551,8 +1524,7 @@ where
     }
 }
 
-impl<RoundID, Payload, Effect, PayloadCodec, EffectCodec>
-    Codec<XactUncommittedReq<RoundID, Payload, Effect>>
+impl<RoundID, Payload, Effect, PayloadCodec, EffectCodec> Create
     for XactUncommittedReqCodec<
         RoundID,
         Payload,
@@ -1562,32 +1534,16 @@ impl<RoundID, Payload, Effect, PayloadCodec, EffectCodec>
     >
 where
     RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>
+    PayloadCodec: Create,
+    EffectCodec: Create
 {
     type CreateError = XactReqCodecCreateError<
         PayloadCodec::CreateError,
         EffectCodec::CreateError
     >;
-    type DecodeError =
-        XactReqCodecDecodeError<
-            PayloadCodec::DecodeError,
-            EffectCodec::DecodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        XactReqCodecEncodeError<
-            PayloadCodec::EncodeError,
-            EffectCodec::EncodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::EncodeError
-        >;
-    type Param = (PayloadCodec::Param, EffectCodec::Param);
+    type Config = (PayloadCodec::Config, EffectCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (payload, effect) = param;
         let payload_codec = PayloadCodec::create(payload)
             .map_err(|err| XactReqCodecCreateError::Payload { err: err })?;
@@ -1603,6 +1559,30 @@ where
             effect_codec: effect_codec
         })
     }
+}
+
+impl<RoundID, Payload, Effect, PayloadCodec, EffectCodec>
+    Encoder<XactUncommittedReq<RoundID, Payload, Effect>>
+    for XactUncommittedReqCodec<
+        RoundID,
+        Payload,
+        Effect,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>
+{
+    type EncodeError =
+        XactReqCodecEncodeError<
+            PayloadCodec::EncodeError,
+            EffectCodec::EncodeError,
+            <XactUncommittedReqHeaderPERCodec as Encoder<
+                XactUncommittedReqHeader
+            >>::EncodeError
+        >;
 
     fn buf_size(
         &self,
@@ -1716,6 +1696,31 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, Payload, Effect, PayloadCodec, EffectCodec>
+    Decoder<XactUncommittedReq<RoundID, Payload, Effect>>
+    for XactUncommittedReqCodec<
+        RoundID,
+        Payload,
+        Effect,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>
+{
+
+    type DecodeError =
+        XactReqCodecDecodeError<
+            PayloadCodec::DecodeError,
+            EffectCodec::DecodeError,
+            <XactUncommittedReqHeaderPERCodec as Decoder<
+                XactUncommittedReqHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -1791,34 +1796,16 @@ where
     }
 }
 
-impl<RoundID, H>
-    Codec<XactUncommittedHashReq<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
-    for XactUncommittedReqBlobCodec<RoundID, H>
+impl<RoundID, H> Create for XactUncommittedReqBlobCodec<RoundID, H>
 where
     H: HashAlgo + Default,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>
 {
     type CreateError = XactReqCodecCreateError<Infallible, Infallible>;
-    type DecodeError =
-        XactReqCodecDecodeError<
-            Infallible,
-            Infallible,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        XactReqCodecEncodeError<
-            Infallible,
-            Infallible,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::EncodeError
-        >;
-    type Param = ();
+    type Config = ();
 
-    fn create(_param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(_param: Self::Config) -> Result<Self, Self::CreateError> {
         let hash = H::default();
 
         Ok(XactUncommittedReqBlobCodec {
@@ -1827,6 +1814,24 @@ where
             hash: hash
         })
     }
+}
+
+impl<RoundID, H>
+    Encoder<XactUncommittedHashReq<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
+    for XactUncommittedReqBlobCodec<RoundID, H>
+where
+    H: HashAlgo + Default,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>
+{
+    type EncodeError =
+        XactReqCodecEncodeError<
+            Infallible,
+            Infallible,
+            <XactUncommittedReqHeaderPERCodec as Encoder<
+                XactUncommittedReqHeader
+            >>::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -1933,6 +1938,24 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H>
+    Decoder<XactUncommittedHashReq<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
+    for XactUncommittedReqBlobCodec<RoundID, H>
+where
+    H: HashAlgo + Default,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>
+{
+    type DecodeError =
+        XactReqCodecDecodeError<
+            Infallible,
+            Infallible,
+            <XactUncommittedReqHeaderPERCodec as Decoder<
+                XactUncommittedReqHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -2028,8 +2051,8 @@ impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
 where
     H: HashAlgo + Default,
     H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
     RoundID: Clone + From<u128> + Into<u128>
 {
     // Generate a hash for an [XactUncommittedHashReq].
@@ -2038,7 +2061,7 @@ where
         req: &XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
     ) -> Result<
         H::HashID,
-        <Self as Codec<
+        <Self as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -2075,7 +2098,7 @@ where
         req: &XactCommittedReq<Payload, Effect>
     ) -> Result<
         H::HashID,
-        <Self as Codec<
+        <Self as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -2107,7 +2130,7 @@ where
         payload: &Payload
     ) -> Result<
         H::HashID,
-        <Self as Codec<
+        <Self as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -2146,7 +2169,7 @@ where
         payload: &Payload
     ) -> Result<
         H::HashID,
-        <Self as Codec<
+        <Self as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -2185,7 +2208,7 @@ where
         payload: &Payload
     ) -> Result<
         H::HashID,
-        <Self as Codec<
+        <Self as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -2223,8 +2246,7 @@ where
     }
 }
 
-impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
-    Codec<XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>>
+impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec> Create
     for XactUncommittedReqHashCodec<
         RoundID,
         H,
@@ -2236,33 +2258,17 @@ impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
 where
     H: HashAlgo + Default,
     H::HashID: Clone,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
+    PayloadCodec: Create,
+    EffectCodec: Create,
     RoundID: Clone + From<u128> + Into<u128>
 {
     type CreateError = XactReqCodecCreateError<
         PayloadCodec::CreateError,
         EffectCodec::CreateError
     >;
-    type DecodeError =
-        XactReqCodecDecodeError<
-            PayloadCodec::DecodeError,
-            EffectCodec::DecodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        XactReqCodecEncodeError<
-            PayloadCodec::EncodeError,
-            EffectCodec::EncodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::EncodeError
-        >;
-    type Param = (PayloadCodec::Param, EffectCodec::Param);
+    type Config = (PayloadCodec::Config, EffectCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (payload, effect) = param;
         let payload_codec = PayloadCodec::create(payload)
             .map_err(|err| XactReqCodecCreateError::Payload { err: err })?;
@@ -2280,6 +2286,33 @@ where
             hash: hash
         })
     }
+}
+
+impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
+    Encoder<XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>>
+    for XactUncommittedReqHashCodec<
+        RoundID,
+        H,
+        Payload,
+        Effect,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    H: HashAlgo + Default,
+    H::HashID: Clone,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
+    RoundID: Clone + From<u128> + Into<u128>
+{
+    type EncodeError =
+        XactReqCodecEncodeError<
+            PayloadCodec::EncodeError,
+            EffectCodec::EncodeError,
+            <XactUncommittedReqHeaderPERCodec as Encoder<
+                XactUncommittedReqHeader
+            >>::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -2396,6 +2429,33 @@ where
 
         Ok(curr)
     }
+}
+
+impl<H, RoundID, Payload, Effect, PayloadCodec, EffectCodec>
+    Decoder<XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>>
+    for XactUncommittedReqHashCodec<
+        RoundID,
+        H,
+        Payload,
+        Effect,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    H: HashAlgo + Default,
+    H::HashID: Clone,
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>,
+    RoundID: Clone + From<u128> + Into<u128>
+{
+    type DecodeError =
+        XactReqCodecDecodeError<
+            PayloadCodec::DecodeError,
+            EffectCodec::DecodeError,
+            <XactUncommittedReqHeaderPERCodec as Decoder<
+                XactUncommittedReqHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -2480,36 +2540,19 @@ where
     }
 }
 
-impl<Payload, Effect, PayloadCodec, EffectCodec>
-    Codec<XactCommittedReq<Payload, Effect>>
+impl<Payload, Effect, PayloadCodec, EffectCodec> Create
     for XactCommittedReqCodec<Payload, Effect, PayloadCodec, EffectCodec>
 where
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>
+    PayloadCodec: Create,
+    EffectCodec: Create
 {
     type CreateError = XactReqCodecCreateError<
         PayloadCodec::CreateError,
         EffectCodec::CreateError
     >;
-    type DecodeError =
-        XactReqCodecDecodeError<
-            PayloadCodec::DecodeError,
-            EffectCodec::DecodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        XactReqCodecEncodeError<
-            PayloadCodec::EncodeError,
-            EffectCodec::EncodeError,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::EncodeError
-        >;
-    type Param = (PayloadCodec::Param, EffectCodec::Param);
+    type Config = (PayloadCodec::Config, EffectCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (payload, effect) = param;
         let payload_codec = PayloadCodec::create(payload)
             .map_err(|err| XactReqCodecCreateError::Payload { err: err })?;
@@ -2524,6 +2567,23 @@ where
             effect_codec: effect_codec
         })
     }
+}
+
+impl<Payload, Effect, PayloadCodec, EffectCodec>
+    Encoder<XactCommittedReq<Payload, Effect>>
+    for XactCommittedReqCodec<Payload, Effect, PayloadCodec, EffectCodec>
+where
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>
+{
+    type EncodeError =
+        XactReqCodecEncodeError<
+            PayloadCodec::EncodeError,
+            EffectCodec::EncodeError,
+            <XactUncommittedReqHeaderPERCodec as Encoder<
+                XactUncommittedReqHeader
+            >>::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -2616,6 +2676,23 @@ where
 
         Ok(curr)
     }
+}
+
+impl<Payload, Effect, PayloadCodec, EffectCodec>
+    Decoder<XactCommittedReq<Payload, Effect>>
+    for XactCommittedReqCodec<Payload, Effect, PayloadCodec, EffectCodec>
+where
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>
+{
+    type DecodeError =
+        XactReqCodecDecodeError<
+            PayloadCodec::DecodeError,
+            EffectCodec::DecodeError,
+            <XactUncommittedReqHeaderPERCodec as Decoder<
+                XactUncommittedReqHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -2672,31 +2749,26 @@ where
     }
 }
 
-impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
+impl Create for XactCommittedReqBlobCodec {
     type CreateError = XactReqCodecCreateError<Infallible, Infallible>;
-    type DecodeError =
-        XactReqCodecDecodeError<
-            Infallible,
-            Infallible,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::DecodeError
-        >;
-    type EncodeError =
-        XactReqCodecEncodeError<
-            Infallible,
-            Infallible,
-            <XactUncommittedReqHeaderPERCodec as Codec<
-                XactUncommittedReqHeader
-            >>::EncodeError
-        >;
-    type Param = ();
+    type Config = ();
 
-    fn create(_param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(_param: Self::Config) -> Result<Self, Self::CreateError> {
         Ok(XactCommittedReqBlobCodec {
             req_codec: XactCommittedReqHeaderPERCodec::default()
         })
     }
+}
+
+impl Encoder<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
+    type EncodeError =
+        XactReqCodecEncodeError<
+            Infallible,
+            Infallible,
+            <XactUncommittedReqHeaderPERCodec as Encoder<
+                XactUncommittedReqHeader
+            >>::EncodeError
+        >;
 
     #[inline]
     fn buf_size(
@@ -2779,6 +2851,17 @@ impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
 
         Ok(curr)
     }
+}
+
+impl Decoder<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
+    type DecodeError =
+        XactReqCodecDecodeError<
+            Infallible,
+            Infallible,
+            <XactUncommittedReqHeaderPERCodec as Decoder<
+                XactUncommittedReqHeader
+            >>::DecodeError
+        >;
 
     fn decode(
         &mut self,
@@ -2839,29 +2922,19 @@ impl Codec<XactCommittedReq<Vec<u8>, Vec<u8>>> for XactCommittedReqBlobCodec {
     }
 }
 
-impl<Seal, Inner, SealCodec, InnerCodec> Codec<XactSealed<Seal, Inner>>
+impl<Seal, Inner, SealCodec, InnerCodec> Create
     for XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
 where
-    SealCodec: Codec<Seal>,
-    InnerCodec: Codec<Inner>
+    SealCodec: Create,
+    InnerCodec: Create
 {
     type CreateError = XactSealedCodecCreateError<
         SealCodec::CreateError,
         InnerCodec::CreateError
     >;
-    type DecodeError = XactSealedCodecError<
-        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
-        SealCodec::DecodeError,
-        InnerCodec::DecodeError
-    >;
-    type EncodeError = XactSealedCodecError<
-        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
-        SealCodec::EncodeError,
-        InnerCodec::EncodeError
-    >;
-    type Param = (SealCodec::Param, InnerCodec::Param);
+    type Config = (SealCodec::Config, InnerCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (seal, inner) = param;
         let seal_codec = SealCodec::create(seal)
             .map_err(|err| XactSealedCodecCreateError::Seal { err: err })?;
@@ -2876,6 +2949,19 @@ where
             inner_codec: inner_codec
         })
     }
+}
+
+impl<Seal, Inner, SealCodec, InnerCodec> Encoder<XactSealed<Seal, Inner>>
+    for XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
+where
+    SealCodec: Encoder<Seal>,
+    InnerCodec: Encoder<Inner>
+{
+    type EncodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Encoder<XactSealHeader>>::EncodeError,
+        SealCodec::EncodeError,
+        InnerCodec::EncodeError
+    >;
 
     #[inline]
     fn buf_size(
@@ -2924,6 +3010,19 @@ where
 
         Ok(curr)
     }
+}
+
+impl<Seal, Inner, SealCodec, InnerCodec> Decoder<XactSealed<Seal, Inner>>
+    for XactSealedCodec<Seal, Inner, SealCodec, InnerCodec>
+where
+    SealCodec: Decoder<Seal>,
+    InnerCodec: Decoder<Inner>
+{
+    type DecodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Decoder<XactSealHeader>>::DecodeError,
+        SealCodec::DecodeError,
+        InnerCodec::DecodeError
+    >;
 
     fn decode(
         &mut self,
@@ -2961,26 +3060,15 @@ where
     }
 }
 
-impl<Inner, InnerCodec> Codec<XactSealed<Vec<u8>, Inner>>
-    for XactSealedBlobCodec<Inner, InnerCodec>
+impl<Inner, InnerCodec> Create for XactSealedBlobCodec<Inner, InnerCodec>
 where
-    InnerCodec: Codec<Inner>
+    InnerCodec: Create
 {
     type CreateError =
         XactSealedCodecCreateError<Infallible, InnerCodec::CreateError>;
-    type DecodeError = XactSealedCodecError<
-        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
-        Infallible,
-        InnerCodec::DecodeError
-    >;
-    type EncodeError = XactSealedCodecError<
-        <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
-        Infallible,
-        InnerCodec::EncodeError
-    >;
-    type Param = InnerCodec::Param;
+    type Config = InnerCodec::Config;
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let inner_codec = InnerCodec::create(param)
             .map_err(|err| XactSealedCodecCreateError::Inner { err: err })?;
 
@@ -2990,6 +3078,18 @@ where
             inner_codec: inner_codec
         })
     }
+}
+
+impl<Inner, InnerCodec> Encoder<XactSealed<Vec<u8>, Inner>>
+    for XactSealedBlobCodec<Inner, InnerCodec>
+where
+    InnerCodec: Encoder<Inner>
+{
+    type EncodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Encoder<XactSealHeader>>::EncodeError,
+        Infallible,
+        InnerCodec::EncodeError
+    >;
 
     #[inline]
     fn buf_size(
@@ -3034,6 +3134,18 @@ where
 
         Ok(curr)
     }
+}
+
+impl<Inner, InnerCodec> Decoder<XactSealed<Vec<u8>, Inner>>
+    for XactSealedBlobCodec<Inner, InnerCodec>
+where
+    InnerCodec: Decoder<Inner>
+{
+    type DecodeError = XactSealedCodecError<
+        <XactSealHeaderPERCodec as Decoder<XactSealHeader>>::DecodeError,
+        Infallible,
+        InnerCodec::DecodeError
+    >;
 
     fn decode(
         &mut self,
@@ -3083,7 +3195,7 @@ impl<
         SealCodec,
         PayloadCodec,
         EffectCodec
-    > Codec<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+    > Create
     for XactCommittedRoundCodec<
         RoundID,
         H,
@@ -3098,9 +3210,9 @@ where
     H: Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    EffectCodec: Codec<Effect>,
-    SealCodec: Codec<Seal>
+    PayloadCodec: Create,
+    EffectCodec: Create,
+    SealCodec: Create
 {
     type CreateError = XactCommittedRoundCodecCreateError<
         SealCodec::CreateError,
@@ -3109,37 +3221,10 @@ where
             EffectCodec::CreateError
         >
     >;
-    type DecodeError =
-        XactCommittedRoundCodecDecodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                PayloadCodec::DecodeError,
-                EffectCodec::DecodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::DecodeError
-            >
-        >;
-    type EncodeError =
-        XactCommittedRoundCodecEncodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                PayloadCodec::EncodeError,
-                EffectCodec::EncodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::EncodeError
-            >
-        >;
-    type Param = (SealCodec::Param, PayloadCodec::Param, EffectCodec::Param);
+    type Config = (SealCodec::Config, PayloadCodec::Config,
+                   EffectCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (seal, payload, effect) = param;
         let seal_codec = SealCodec::create(seal).map_err(|err| {
             XactCommittedRoundCodecCreateError::Seal { err: err }
@@ -3162,6 +3247,50 @@ where
             hash: hash
         })
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec
+    > Encoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+    for XactCommittedRoundCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
+    SealCodec: Encoder<Seal>
+{
+    type EncodeError =
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Encoder<
+                XactCommittedRoundHeader
+            >>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactCommittedReqHeaderPERCodec as Encoder<
+                    XactCommittedReqHeader
+                >>::EncodeError
+            >
+        >;
 
     #[inline]
     fn buf_size(
@@ -3274,6 +3403,50 @@ where
 
         Ok(curr)
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec
+    > Decoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+    for XactCommittedRoundCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>,
+    SealCodec: Decoder<Seal>
+{
+    type DecodeError =
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Decoder<
+                XactCommittedRoundHeader
+            >>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactCommittedReqHeaderPERCodec as Decoder<
+                    XactCommittedReqHeader
+                >>::DecodeError
+            >
+        >;
 
     fn decode(
         &mut self,
@@ -3370,50 +3543,21 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec>
-    Codec<XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>>
+impl<RoundID, H, Seal, SealCodec> Create
     for XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
 where
     H: Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    SealCodec: Codec<Seal>
+    SealCodec: Create
 {
     type CreateError = XactCommittedRoundCodecCreateError<
         SealCodec::CreateError,
         XactReqCodecCreateError<Infallible, Infallible>
     >;
-    type DecodeError =
-        XactCommittedRoundCodecDecodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                Infallible,
-                Infallible,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::DecodeError
-            >
-        >;
-    type EncodeError =
-        XactCommittedRoundCodecEncodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                Infallible,
-                Infallible,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::EncodeError
-            >
-        >;
-    type Param = SealCodec::Param;
+    type Config = SealCodec::Config;
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let seal_codec = SealCodec::create(param).map_err(|err| {
             XactCommittedRoundCodecCreateError::Seal { err: err }
         })?;
@@ -3433,6 +3577,31 @@ where
             hash: hash
         })
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Encoder<XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>>
+    for XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Encoder<Seal>
+{
+    type EncodeError =
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Encoder<
+                XactCommittedRoundHeader
+            >>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Encoder<
+                    XactCommittedReqHeader
+                >>::EncodeError
+            >
+        >;
 
     #[inline]
     fn buf_size(
@@ -3545,6 +3714,31 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Decoder<XactCommittedRound<RoundID, H::HashID, Seal, Vec<u8>, Vec<u8>>>
+    for XactCommittedRoundBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Decoder<Seal>
+{
+    type DecodeError =
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Decoder<
+                XactCommittedRoundHeader
+            >>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Decoder<
+                    XactCommittedReqHeader
+                >>::DecodeError
+            >
+        >;
 
     fn decode(
         &mut self,
@@ -3641,33 +3835,22 @@ where
     }
 }
 
-impl<RoundID, H, Res, Err, ResCodec, ErrCodec>
-    Codec<XactNotify<RoundID, H::HashID, Res, Err>>
+impl<RoundID, H, Res, Err, ResCodec, ErrCodec> Create
     for XactNotifyCodec<RoundID, H, Res, Err, ResCodec, ErrCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Default + HashAlgo,
     H::HashID: Clone,
-    ResCodec: Codec<Res>,
-    ErrCodec: Codec<Err>
+    ResCodec: Create,
+    ErrCodec: Create
 {
     type CreateError = XactNotifyCodecCreateError<
         ResCodec::CreateError,
         ErrCodec::CreateError
     >;
-    type DecodeError = XactNotifyCodecDecodeError<
-        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError,
-        ResCodec::DecodeError,
-        ErrCodec::DecodeError
-    >;
-    type EncodeError = XactNotifyCodecEncodeError<
-        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError,
-        ResCodec::EncodeError,
-        ErrCodec::EncodeError
-    >;
-    type Param = (ResCodec::Param, ErrCodec::Param);
+    type Config = (ResCodec::Config, ErrCodec::Config);
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (res, err) = param;
         let res_codec = ResCodec::create(res)
             .map_err(|err| XactNotifyCodecCreateError::Res { err: err })?;
@@ -3685,6 +3868,23 @@ where
             hash: hash
         })
     }
+}
+
+impl<RoundID, H, Res, Err, ResCodec, ErrCodec>
+    Encoder<XactNotify<RoundID, H::HashID, Res, Err>>
+    for XactNotifyCodec<RoundID, H, Res, Err, ResCodec, ErrCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    ResCodec: Encoder<Res>,
+    ErrCodec: Encoder<Err>
+{
+    type EncodeError = XactNotifyCodecEncodeError<
+        <XactNotifyHeaderPERCodec as Encoder<XactNotifyHeader>>::EncodeError,
+        ResCodec::EncodeError,
+        ErrCodec::EncodeError
+    >;
 
     #[inline]
     fn buf_size(
@@ -3933,6 +4133,23 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H, Res, Err, ResCodec, ErrCodec>
+    Decoder<XactNotify<RoundID, H::HashID, Res, Err>>
+    for XactNotifyCodec<RoundID, H, Res, Err, ResCodec, ErrCodec>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    ResCodec: Decoder<Res>,
+    ErrCodec: Decoder<Err>
+{
+    type DecodeError = XactNotifyCodecDecodeError<
+        <XactNotifyHeaderPERCodec as Decoder<XactNotifyHeader>>::DecodeError,
+        ResCodec::DecodeError,
+        ErrCodec::DecodeError
+    >;
 
     fn decode(
         &mut self,
@@ -4067,27 +4284,16 @@ where
     }
 }
 
-impl<RoundID, H> Codec<XactNotify<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
-    for XactNotifyBlobCodec<RoundID, H>
+impl<RoundID, H> Create for XactNotifyBlobCodec<RoundID, H>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Clone + Default + HashAlgo,
     H::HashID: Clone
 {
     type CreateError = XactNotifyCodecCreateError<Infallible, Infallible>;
-    type DecodeError = XactNotifyCodecDecodeError<
-        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError,
-        Infallible,
-        Infallible
-    >;
-    type EncodeError = XactNotifyCodecEncodeError<
-        <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError,
-        Infallible,
-        Infallible
-    >;
-    type Param = ();
+    type Config = ();
 
-    fn create(_param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(_param: Self::Config) -> Result<Self, Self::CreateError> {
         let hash = H::default();
 
         Ok(XactNotifyBlobCodec {
@@ -4096,6 +4302,20 @@ where
             hash: hash
         })
     }
+}
+
+impl<RoundID, H> Encoder<XactNotify<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
+    for XactNotifyBlobCodec<RoundID, H>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone
+{
+    type EncodeError = XactNotifyCodecEncodeError<
+        <XactNotifyHeaderPERCodec as Encoder<XactNotifyHeader>>::EncodeError,
+        Infallible,
+        Infallible
+    >;
 
     #[inline]
     fn buf_size(
@@ -4334,6 +4554,20 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H> Decoder<XactNotify<RoundID, H::HashID, Vec<u8>, Vec<u8>>>
+    for XactNotifyBlobCodec<RoundID, H>
+where
+    RoundID: Clone + From<u128> + Into<u128>,
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone
+{
+    type DecodeError = XactNotifyCodecDecodeError<
+        <XactNotifyHeaderPERCodec as Decoder<XactNotifyHeader>>::DecodeError,
+        Infallible,
+        Infallible
+    >;
 
     fn decode(
         &mut self,
@@ -4483,7 +4717,7 @@ impl<
         EffectCodec,
         ResCodec,
         ErrCodec
-    > Codec<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    > Create
     for XactBatchCodec<
         RoundID,
         H,
@@ -4502,16 +4736,16 @@ where
     H: Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    PayloadCodec::Param: Clone,
-    EffectCodec: Codec<Effect>,
-    EffectCodec::Param: Clone,
-    SealCodec: Codec<Seal>,
-    SealCodec::Param: Clone,
-    ResCodec: Codec<Res>,
-    ResCodec::Param: Clone,
-    ErrCodec: Codec<Err>,
-    ErrCodec::Param: Clone
+    PayloadCodec: Create,
+    PayloadCodec::Config: Clone,
+    EffectCodec: Create,
+    EffectCodec::Config: Clone,
+    SealCodec: Create,
+    SealCodec::Config: Clone,
+    ResCodec: Create,
+    ResCodec::Config: Clone,
+    ErrCodec: Create,
+    ErrCodec::Config: Clone
 {
     type CreateError = XactBatchCodecCreateError<
         XactSealedCodecCreateError<
@@ -4533,79 +4767,15 @@ where
             ErrCodec::CreateError
         >
     >;
-    type DecodeError = XactBatchCodecDecodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                PayloadCodec::DecodeError,
-                EffectCodec::DecodeError,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactCommittedRoundCodecDecodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                PayloadCodec::DecodeError,
-                EffectCodec::DecodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactNotifyCodecDecodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError,
-            ResCodec::DecodeError,
-            ErrCodec::DecodeError
-        >
-    >;
-    type EncodeError = XactBatchCodecEncodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                PayloadCodec::EncodeError,
-                EffectCodec::EncodeError,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactCommittedRoundCodecEncodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                PayloadCodec::EncodeError,
-                EffectCodec::EncodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactNotifyCodecEncodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError,
-            ResCodec::EncodeError,
-            ErrCodec::EncodeError
-        >
-    >;
-    type Param = (
-        SealCodec::Param,
-        PayloadCodec::Param,
-        EffectCodec::Param,
-        ResCodec::Param,
-        ErrCodec::Param
+    type Config = (
+        SealCodec::Config,
+        PayloadCodec::Config,
+        EffectCodec::Config,
+        ResCodec::Config,
+        ErrCodec::Config
     );
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (seal, payload, effect, res, err) = param;
         let req_codec = XactSealedCodec::create((
             seal.clone(),
@@ -4628,6 +4798,78 @@ where
             notify_codec: notify_codec
         })
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    > Encoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
+    SealCodec: Encoder<Seal>,
+    ResCodec: Encoder<Res>,
+    ErrCodec: Encoder<Err>,
+{
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Encoder<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Encoder<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactUncommittedReqHeaderPERCodec as Encoder<
+                    XactUncommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Encoder<
+                XactCommittedRoundHeader
+            >>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactCommittedReqHeaderPERCodec as Encoder<
+                    XactCommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactNotifyCodecEncodeError<
+            <XactNotifyHeaderPERCodec as Encoder<XactNotifyHeader>>::EncodeError,
+            ResCodec::EncodeError,
+            ErrCodec::EncodeError
+        >
+    >;
 
     #[inline]
     fn buf_size(
@@ -4695,6 +4937,78 @@ where
 
         Ok(curr)
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    > Decoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>,
+    SealCodec: Decoder<Seal>,
+    ResCodec: Decoder<Res>,
+    ErrCodec: Decoder<Err>,
+{
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Decoder<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Decoder<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactUncommittedReqHeaderPERCodec as Decoder<
+                    XactUncommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Decoder<
+                XactCommittedRoundHeader
+            >>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactCommittedReqHeaderPERCodec as Decoder<
+                    XactCommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactNotifyCodecDecodeError<
+            <XactNotifyHeaderPERCodec as Decoder<XactNotifyHeader>>::DecodeError,
+            ResCodec::DecodeError,
+            ErrCodec::DecodeError
+        >
+    >;
 
     fn decode(
         &mut self,
@@ -4793,16 +5107,11 @@ where
     H: Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    PayloadCodec::Param: Clone,
-    EffectCodec: Codec<Effect>,
-    EffectCodec::Param: Clone,
-    SealCodec: Codec<Seal>,
-    SealCodec::Param: Clone,
-    ResCodec: Codec<Res>,
-    ResCodec::Param: Clone,
-    ErrCodec: Codec<Err>,
-    ErrCodec::Param: Clone
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
+    SealCodec: Encoder<Seal>,
+    ResCodec: Encoder<Res>,
+    ErrCodec: Encoder<Err>,
 {
     // Generate a hash for an [XactUncommittedHashReq].
     pub fn hash(
@@ -4817,7 +5126,7 @@ where
             Effect,
             PayloadCodec,
             EffectCodec
-        > as Codec<
+        > as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -4837,7 +5146,7 @@ where
             Effect,
             PayloadCodec,
             EffectCodec
-        > as Codec<
+        > as Encoder<
             XactUncommittedHashReq<RoundID, H::HashID, Payload, Effect>
         >>::EncodeError
     > {
@@ -4858,7 +5167,7 @@ impl<
         EffectCodec,
         ResCodec,
         ErrCodec
-    > Codec<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    > Create
     for XactBatchHashCodec<
         RoundID,
         H,
@@ -4877,16 +5186,16 @@ where
     H: Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    PayloadCodec: Codec<Payload>,
-    PayloadCodec::Param: Clone,
-    EffectCodec: Codec<Effect>,
-    EffectCodec::Param: Clone,
-    SealCodec: Codec<Seal>,
-    SealCodec::Param: Clone,
-    ResCodec: Codec<Res>,
-    ResCodec::Param: Clone,
-    ErrCodec: Codec<Err>,
-    ErrCodec::Param: Clone
+    PayloadCodec: Create,
+    PayloadCodec::Config: Clone,
+    EffectCodec: Create,
+    EffectCodec::Config: Clone,
+    SealCodec: Create,
+    SealCodec::Config: Clone,
+    ResCodec: Create,
+    ResCodec::Config: Clone,
+    ErrCodec: Create,
+    ErrCodec::Config: Clone
 {
     type CreateError = XactBatchCodecCreateError<
         XactSealedCodecCreateError<
@@ -4908,79 +5217,15 @@ where
             ErrCodec::CreateError
         >
     >;
-    type DecodeError = XactBatchCodecDecodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                PayloadCodec::DecodeError,
-                EffectCodec::DecodeError,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactCommittedRoundCodecDecodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                PayloadCodec::DecodeError,
-                EffectCodec::DecodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactNotifyCodecDecodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError,
-            ResCodec::DecodeError,
-            ErrCodec::DecodeError
-        >
-    >;
-    type EncodeError = XactBatchCodecEncodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                PayloadCodec::EncodeError,
-                EffectCodec::EncodeError,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactCommittedRoundCodecEncodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                PayloadCodec::EncodeError,
-                EffectCodec::EncodeError,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactNotifyCodecEncodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError,
-            ResCodec::EncodeError,
-            ErrCodec::EncodeError
-        >
-    >;
-    type Param = (
-        SealCodec::Param,
-        PayloadCodec::Param,
-        EffectCodec::Param,
-        ResCodec::Param,
-        ErrCodec::Param
+    type Config = (
+        SealCodec::Config,
+        PayloadCodec::Config,
+        EffectCodec::Config,
+        ResCodec::Config,
+        ErrCodec::Config
     );
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let (seal, payload, effect, res, err) = param;
         let req_codec = XactSealedCodec::create((
             seal.clone(),
@@ -5003,6 +5248,78 @@ where
             notify_codec: res_codec
         })
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    > Encoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchHashCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Encoder<Payload>,
+    EffectCodec: Encoder<Effect>,
+    SealCodec: Encoder<Seal>,
+    ResCodec: Encoder<Res>,
+    ErrCodec: Encoder<Err>,
+{
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Encoder<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Encoder<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactUncommittedReqHeaderPERCodec as Encoder<
+                    XactUncommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Encoder<
+                XactCommittedRoundHeader
+            >>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                PayloadCodec::EncodeError,
+                EffectCodec::EncodeError,
+                <XactCommittedReqHeaderPERCodec as Encoder<
+                    XactCommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactNotifyCodecEncodeError<
+            <XactNotifyHeaderPERCodec as Encoder<XactNotifyHeader>>::EncodeError,
+            ResCodec::EncodeError,
+            ErrCodec::EncodeError
+        >
+    >;
 
     #[inline]
     fn buf_size(
@@ -5086,6 +5403,78 @@ where
 
         Ok(curr)
     }
+}
+
+impl<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    > Decoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    for XactBatchHashCodec<
+        RoundID,
+        H,
+        Seal,
+        Payload,
+        Effect,
+        Res,
+        Err,
+        SealCodec,
+        PayloadCodec,
+        EffectCodec,
+        ResCodec,
+        ErrCodec
+    >
+where
+    H: Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    PayloadCodec: Decoder<Payload>,
+    EffectCodec: Decoder<Effect>,
+    SealCodec: Decoder<Seal>,
+    ResCodec: Decoder<Res>,
+    ErrCodec: Decoder<Err>,
+{
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Decoder<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Decoder<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactUncommittedReqHeaderPERCodec as Decoder<
+                    XactUncommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Decoder<
+                XactCommittedRoundHeader
+            >>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                PayloadCodec::DecodeError,
+                EffectCodec::DecodeError,
+                <XactCommittedReqHeaderPERCodec as Decoder<
+                    XactCommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactNotifyCodecDecodeError<
+            <XactNotifyHeaderPERCodec as Decoder<XactNotifyHeader>>::DecodeError,
+            ResCodec::DecodeError,
+            ErrCodec::DecodeError
+        >
+    >;
 
     fn decode(
         &mut self,
@@ -5152,24 +5541,14 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec>
-    Codec<
-        XactHashBatch<
-            RoundID,
-            H::HashID,
-            Seal,
-            Vec<u8>,
-            Vec<u8>,
-            Vec<u8>,
-            Vec<u8>
-        >
-    > for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+impl<RoundID, H, Seal, SealCodec> Create
+    for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
 where
     H: Clone + Default + HashAlgo,
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
-    SealCodec: Codec<Seal>,
-    SealCodec::Param: Clone
+    SealCodec: Create,
+    SealCodec::Config: Clone
 {
     type CreateError = XactBatchCodecCreateError<
         XactSealedCodecCreateError<
@@ -5182,73 +5561,9 @@ where
         >,
         XactNotifyCodecCreateError<Infallible, Infallible>
     >;
-    type DecodeError = XactBatchCodecDecodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::DecodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                Infallible,
-                Infallible,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactCommittedRoundCodecDecodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::DecodeError,
-            SealCodec::DecodeError,
-            XactReqCodecDecodeError<
-                Infallible,
-                Infallible,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::DecodeError
-            >
-        >,
-        XactNotifyCodecDecodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::DecodeError,
-            Infallible,
-            Infallible
-        >
-    >;
-    type EncodeError = XactBatchCodecEncodeError<
-        <XactBatchHeaderPERCodec as Codec<XactBatchHeader>>::EncodeError,
-        XactSealedCodecError<
-            <XactSealHeaderPERCodec as Codec<XactSealHeader>>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                Infallible,
-                Infallible,
-                <XactUncommittedReqHeaderPERCodec as Codec<
-                    XactUncommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactCommittedRoundCodecEncodeError<
-            <XactCommittedRoundHeaderPERCodec as Codec<
-                XactCommittedRoundHeader
-            >>::EncodeError,
-            SealCodec::EncodeError,
-            XactReqCodecEncodeError<
-                Infallible,
-                Infallible,
-                <XactCommittedReqHeaderPERCodec as Codec<
-                    XactCommittedReqHeader
-                >>::EncodeError
-            >
-        >,
-        XactNotifyCodecEncodeError<
-            <XactNotifyHeaderPERCodec as Codec<XactNotifyHeader>>::EncodeError,
-            Infallible,
-            Infallible
-        >
-    >;
-    type Param = SealCodec::Param;
+    type Config = SealCodec::Config;
 
-    fn create(param: Self::Param) -> Result<Self, Self::CreateError> {
+    fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
         let req_codec = XactSealedCodec::create((param.clone(), ()))
             .map_err(|err| XactBatchCodecCreateError::Req { err: err })?;
         let committed_codec = XactCommittedRoundBlobCodec::create(
@@ -5265,6 +5580,58 @@ where
             notify_codec: notify_codec
         })
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Encoder<
+        XactHashBatch<
+            RoundID,
+            H::HashID,
+            Seal,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>
+        >
+    > for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Encoder<Seal>,
+{
+    type EncodeError = XactBatchCodecEncodeError<
+        <XactBatchHeaderPERCodec as Encoder<XactBatchHeader>>::EncodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Encoder<XactSealHeader>>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                Infallible,
+                Infallible,
+                <XactUncommittedReqHeaderPERCodec as Encoder<
+                    XactUncommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactCommittedRoundCodecEncodeError<
+            <XactCommittedRoundHeaderPERCodec as Encoder<
+                XactCommittedRoundHeader
+            >>::EncodeError,
+            SealCodec::EncodeError,
+            XactReqCodecEncodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Encoder<
+                    XactCommittedReqHeader
+                >>::EncodeError
+            >
+        >,
+        XactNotifyCodecEncodeError<
+            <XactNotifyHeaderPERCodec as Encoder<XactNotifyHeader>>::EncodeError,
+            Infallible,
+            Infallible
+        >
+    >;
 
     #[inline]
     fn buf_size(
@@ -5348,6 +5715,58 @@ where
 
         Ok(curr)
     }
+}
+
+impl<RoundID, H, Seal, SealCodec>
+    Decoder<
+        XactHashBatch<
+            RoundID,
+            H::HashID,
+            Seal,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>
+        >
+    > for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+where
+    H: Clone + Default + HashAlgo,
+    H::HashID: Clone,
+    RoundID: Clone + From<u128> + Into<u128>,
+    SealCodec: Decoder<Seal>,
+{
+    type DecodeError = XactBatchCodecDecodeError<
+        <XactBatchHeaderPERCodec as Decoder<XactBatchHeader>>::DecodeError,
+        XactSealedCodecError<
+            <XactSealHeaderPERCodec as Decoder<XactSealHeader>>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                Infallible,
+                Infallible,
+                <XactUncommittedReqHeaderPERCodec as Decoder<
+                    XactUncommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactCommittedRoundCodecDecodeError<
+            <XactCommittedRoundHeaderPERCodec as Decoder<
+                XactCommittedRoundHeader
+            >>::DecodeError,
+            SealCodec::DecodeError,
+            XactReqCodecDecodeError<
+                Infallible,
+                Infallible,
+                <XactCommittedReqHeaderPERCodec as Decoder<
+                    XactCommittedReqHeader
+                >>::DecodeError
+            >
+        >,
+        XactNotifyCodecDecodeError<
+            <XactNotifyHeaderPERCodec as Decoder<XactNotifyHeader>>::DecodeError,
+            Infallible,
+            Infallible
+        >
+    >;
 
     fn decode(
         &mut self,
@@ -6111,16 +6530,19 @@ pub struct TestEffectsCodec;
 pub struct TestPayloadCodec;
 
 #[cfg(test)]
-impl Codec<TestEffects> for TestEffectsCodec {
+impl Create for TestEffectsCodec {
     type CreateError = Infallible;
-    type DecodeError = Infallible;
-    type EncodeError = Infallible;
-    type Param = ();
+    type Config = ();
 
     #[inline]
     fn create(_param: ()) -> Result<Self, Infallible> {
         Ok(TestEffectsCodec)
     }
+}
+
+#[cfg(test)]
+impl Encoder<TestEffects> for TestEffectsCodec {
+    type EncodeError = Infallible;
 
     #[inline]
     fn buf_size(
@@ -6142,6 +6564,11 @@ impl Codec<TestEffects> for TestEffectsCodec {
 
         Ok(len)
     }
+}
+
+#[cfg(test)]
+impl Decoder<TestEffects> for TestEffectsCodec {
+    type DecodeError = Infallible;
 
     #[inline]
     fn decode(
@@ -6156,16 +6583,19 @@ impl Codec<TestEffects> for TestEffectsCodec {
 }
 
 #[cfg(test)]
-impl Codec<TestPayload> for TestPayloadCodec {
+impl Create for TestPayloadCodec {
     type CreateError = Infallible;
-    type DecodeError = Infallible;
-    type EncodeError = Infallible;
-    type Param = ();
+    type Config = ();
 
     #[inline]
     fn create(_param: ()) -> Result<Self, Infallible> {
         Ok(TestPayloadCodec)
     }
+}
+
+#[cfg(test)]
+impl Encoder<TestPayload> for TestPayloadCodec {
+    type EncodeError = Infallible;
 
     #[inline]
     fn buf_size(
@@ -6187,6 +6617,11 @@ impl Codec<TestPayload> for TestPayloadCodec {
 
         Ok(len)
     }
+}
+
+#[cfg(test)]
+impl Decoder<TestPayload> for TestPayloadCodec {
+    type DecodeError = Infallible;
 
     #[inline]
     fn decode(
