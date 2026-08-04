@@ -61,6 +61,7 @@ constellation-channels = { git = "https://github.com/constellation-system/conste
 constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "project/ioc", default-features = false }
 constellation-streams = { git = "https://github.com/constellation-system/constellation-streams.git", branch = "project/ioc", default-features = false }
 log = { version = "0.4", optional = true }
+mio = { version = "1.0" }
 serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1.16", features = ["v5"] }
 

@@ -17,638 +17,255 @@
 // <https://www.gnu.org/licenses/>.
 
 use std::fmt::Display;
+use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::io::Error;
-use std::marker::PhantomData;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::AuthNMsgRecv;
-use constellation_auth::authn::PassthruMsgAuthN;
-use constellation_auth::authn::SessionAuthN;
-use constellation_channels::config::ChannelRegistryChannelsConfig;
-use constellation_channels::config::CompoundFarEndpoint;
-use constellation_channels::config::ResolverConfig;
-use constellation_channels::far::compound::CompoundFarChannel;
-use constellation_channels::far::compound::CompoundFarChannelThreadedFlows;
-use constellation_channels::far::compound::CompoundFarChannelXfrmPeerAddr;
-use constellation_channels::far::flows::OwnedFlowNegotiator;
-use constellation_channels::far::flows::OwnedFlowsCreate;
-use constellation_channels::far::flows::ThreadedFlowsListener;
-use constellation_channels::far::flows::ThreadedFlowsPullStreamListener;
-use constellation_channels::far::registry::FarChannelRegistryAcquireError;
-use constellation_channels::far::registry::FarChannelRegistryChannels;
-use constellation_channels::far::registry::FarChannelRegistryChannelsCreateError;
-use constellation_channels::far::registry::FarChannelRegistryCtx;
-use constellation_channels::far::registry::FarChannelRegistryID;
-use constellation_channels::far::registry::RegistryAcquireError;
-use constellation_channels::far::udp::UDPDatagramXfrm;
-use constellation_channels::far::unix::UnixDatagramXfrm;
-use constellation_channels::far::FarChannelAcquired;
-use constellation_channels::far::FarChannelAcquiredResolve;
-use constellation_channels::far::FarChannelCreate;
-use constellation_channels::far::FarChannelFlowsError;
-use constellation_channels::far::FarChannelOwnedFlows;
-use constellation_channels::resolve::cache::NSNameCachesCtx;
-use constellation_channels::resolve::MixedResolver;
-use constellation_common::codec::Codec;
-use constellation_common::codec::DatagramCodec;
-use constellation_common::ids::IDGen;
-use constellation_common::net::DatagramXfrm;
-use constellation_common::net::DatagramXfrmCreate;
-use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::PrivateMsgs;
-use constellation_common::net::Socket;
-use constellation_common::shutdown::ShutdownFlag;
-use constellation_common::sync::Notify;
+use constellation_common::config::Create;
+use constellation_common::config::CreateWithParam;
+use constellation_common::error::ScopedError;
+use constellation_common::retry::RetryWhen;
 use constellation_streams::addrs::Addrs;
 use constellation_streams::addrs::AddrsCreate;
-use constellation_streams::channels::ChannelParam;
+use constellation_streams::channels::Channels;
+use constellation_streams::channels::ChannelsListen;
+use constellation_streams::channels::ChannelsShutdown;
+use constellation_streams::config::PrivateDatagramModeConfig;
+use constellation_streams::stream::PullStream;
+use constellation_streams::stream::PushStream;
 use constellation_streams::select::StreamSelector;
 use constellation_streams::select::StreamSelectorCreateError;
-use constellation_streams::select::StreamSelectorReporter;
-use constellation_streams::select::ThreadedStreamSelectorError;
-use constellation_streams::stream::ConcurrentStream;
-use constellation_streams::stream::PushStreamReporter;
-use constellation_streams::stream::StreamID;
-use constellation_streams::threads::pull::PullStreams;
-use constellation_streams::threads::pull::PullStreamsListenThread;
-use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::private::PrivateDatagramPushMode;
-use constellation_streams::threads::push::PushStreamThread;
+use constellation_streams::threads::poll::PollThread;
+use constellation_streams::threads::poll::PollThreadCreateError;
+use constellation_streams::threads::poll::PollThreadCtx;
+use constellation_streams::threads::poll::PollThreadTypes;
 use log::debug;
 use log::error;
 use log::info;
+use mio::Waker;
 
 use crate::config::UnicastDatagramBusConfig;
 
-// ISSUE #2: Need to refactor authn so we can properly handle message
-// authentication.
-
-pub type CompoundUnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    SessionAuth,
-    Xfrm,
-    Ctx
-> = UnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    CompoundFarChannel,
-    CompoundFarChannelThreadedFlows<
-        SessionAuth,
-        UnixDatagramXfrm,
-        UDPDatagramXfrm,
-        FarChannelRegistryID
-    >,
-    SessionAuth,
-    Xfrm,
-    MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>,
-    CompoundFarEndpoint,
-    Ctx
->;
-
-pub struct UnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Ctx
-> where
-    Msg: 'static + Clone + Send,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    SessionAuth: 'static + Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: 'static
+pub trait UnicastDatagramBusTypes<Ctx>
+where Ctx: 'static + Send {
+    type Addr: 'static + Clone + Debug + Display + Eq + Hash + Send;
+    type ChannelParam: 'static + Clone + Debug + Display + Eq + Hash + Send;
+    type ChannelID: 'static + Clone + Debug + Display + Eq + Hash + Send;
+    type SessionPrin: Display;
+    type InMsg;
+    type MsgPrin: Clone + Display + Eq + Hash;
+    type AuthNMsg: AuthNed<Self::MsgPrin, Self::InMsg>;
+    type Wrapper;
+    type PullError: Debug + Display + ScopedError;
+    type Chan: Clone + PullStream<Self::Wrapper, PullError = Self::PullError>;
+    type AuthNChan: 'static
         + Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: 'static + OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        > + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm: 'static +
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Ctx: 'static
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
-    Endpoint: 'static + Send,
-    Resolver: 'static
-        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin: 'static
-        + Clone
-        + Eq
-        + Hash
-        + Into<Option<IPEndpointAddr>>
-        + Send
-        + Sync {
-    endpoint: PhantomData<Endpoint>,
-    push: PushStreamThread<
-        Msgs,
-        StreamSelector<
-            Epochs,
-            FarChannelRegistryChannels<
-                Msg,
-                MsgCodec,
-                PullStreamsReporter<
-                    Msg,
-                    Msg,
-                    ThreadedFlowsPullStreamListener<
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        Msg,
-                        MsgCodec,
-                        StreamID<
-                            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                            F::ChannelID,
-                            Channel::Param
-                        >,
-                        SessionAuth::Prin
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Channel,
-                F,
-                SessionAuth,
-                Xfrm
-            >,
-            Resolver,
-            Ctx
-        >,
-        PrivateDatagramPushMode<
-            Msg,
-            StreamSelector<
-                Epochs,
-                FarChannelRegistryChannels<
-                    Msg,
-                    MsgCodec,
-                    PullStreamsReporter<
-                        Msg,
-                        Msg,
-                        ThreadedFlowsPullStreamListener<
-                            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                            Msg,
-                            MsgCodec,
-                            StreamID<
-                                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                                F::ChannelID,
-                                Channel::Param
-                            >,
-                            SessionAuth::Prin
-                        >,
-                        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                        Recv
-                    >,
-                    Channel,
-                    F,
-                    SessionAuth,
-                    Xfrm
-                >,
-                Resolver,
-                Ctx
-            >,
-            Ctx
-        >,
-        Ctx
-    >,
-    pull: PullStreamsListenThread<
-        Msg,
-        Msg,
-        ThreadedFlowsPullStreamListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
+        + AuthNed<Self::SessionPrin, Self::Chan>
+        + PushStream<PollThreadCtx<Self::Chans, Ctx>>
+        + Send;
+    type EpochsConfig: Default;
+    type EpochsCreateError: Debug + Display;
+    type Epochs: Iterator<Item = u128>
+        + Create<Config = Self::EpochsConfig,
+                 CreateError = Self::EpochsCreateError>;
+    type MsgAuthConfig;
+    type MsgAuthCreateError: Debug + Display;
+    type Msgs: 'static + Send;
+    type ResolveConfig: Clone + Default;
+    type ResolveOrigin: Clone + Display + Eq + Hash;
+    type ResolveCreateError: Debug + Display;
+    type Resolve: Addrs<Addr = Self::Addr>
+        + AddrsCreate<
+            PollThreadCtx<Self::Chans, Ctx>,
+            Config = Self::ResolveConfig,
+            Origin = Self::ResolveOrigin,
+            CreateError = Self::ResolveCreateError
+        >;
+    type RecvError: Debug + Display + ScopedError;
+    type Recv: 'static
+        + AuthNMsgRecv<
+            Self::MsgPrin,
+            Self::InMsg,
+            Self::AuthNMsg,
+            RecvError = Self::RecvError
         >
-    >,
-    reporter: StreamSelectorReporter<
-        Epochs,
-        FarChannelRegistryChannels<
-            Msg,
-            MsgCodec,
-            PullStreamsReporter<
-                Msg,
-                Msg,
-                ThreadedFlowsPullStreamListener<
-                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                    Msg,
-                    MsgCodec,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    SessionAuth::Prin
-                >,
-                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                Recv
-            >,
-            Channel,
-            F,
-            SessionAuth,
-            Xfrm
+        + Send;
+    type ModeCreateError: Debug + Display;
+    type ChansOutNegoParam: Clone + Eq + Hash;
+    type ChansConfig;
+    type ChansCreateError: Debug + Display;
+    type ChanShutdownError: Debug + Display + ScopedError;
+    type ChanShutdownRetry: RetryWhen;
+    type Chans: 'static
+        + for<'a> CreateWithParam<
+            &'a mut Ctx,
+            Config = Self::ChansConfig,
+            CreateError = Self::ChansCreateError,
+        >
+        + Channels<
+            Ctx,
+            Addr = Self::Addr,
+            Param = Self::ChannelParam,
+            Stream = Self::AuthNChan,
+            ChannelID = Self::ChannelID,
+            OutNegoParam = Self::ChansOutNegoParam
+        >
+        + ChannelsListen<Ctx>
+        + ChannelsShutdown<
+            Ctx,
+            ShutdownStreamError = Self::ChanShutdownError,
+            ShutdownStreamRetry = Self::ChanShutdownRetry
+        >
+        + Send;
+    type ThreadTypes: PollThreadTypes<
+        Ctx,
+        Addr = Self::Addr,
+        InMsg = Self::InMsg,
+        SessionPrin = Self::SessionPrin,
+        MsgPrin = Self::MsgPrin,
+        AuthNMsg = Self::AuthNMsg,
+        Recv = Self::Recv,
+        Msgs = Self::Msgs,
+        Stream = StreamSelector<
+            Self::Epochs,
+            Self::Resolve,
+            PollThreadCtx<Self::Chans, Ctx>
         >,
-        Resolver,
-        Ctx
-    >
+        MsgAuthConfig = Self::MsgAuthConfig,
+        ChansConfig = Self::ChansConfig,
+        MsgAuthCreateError = Self::MsgAuthCreateError,
+        ModeConfig = PrivateDatagramModeConfig,
+        ModeCreateError = Self::ModeCreateError,
+        ChansCreateError = Self::ChansCreateError
+    >;
+}
+
+pub struct UnicastDatagramBus<Ctx, Types>
+where
+    Ctx: 'static + Send,
+    Types: UnicastDatagramBusTypes<Ctx>
+{
+    poll: PollThread<Ctx, Types::ThreadTypes>
 }
 
 /// Cleanup object for [UnicastDatagramBus].
 pub struct UnicastDatagramBusCleanup {
-    notify: Notify,
-    sender_join: JoinHandle<()>,
-    pull_join: JoinHandle<()>
+    poll_join: JoinHandle<()>
 }
 
 /// Type of errors that can occur when creating a [UnicastDatagramBus].
 #[derive(Debug)]
-pub enum UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
-    /// Error acquiring channels.
-    Acquire {
-        /// The error that occurred while acquiring the channels.
-        err: Acquire
-    },
-    /// Error while creating message codecs.
-    MsgCodec {
-        /// The error that occurred while creating message codecs.
-        err: MsgCodec
-    },
-    /// Error while creating [StreamSelector]s.
+pub enum UnicastDatagramBusCreateError<Stream, Poll> {
+    /// Error while creating the [StreamSelector].
     Stream {
         /// The error that occurred while creating [StreamSelector]s.
         err: Stream
     },
-    /// Error while [refresh](StreamSelector::refresh)ing the
-    /// [StreamSelector]s.
-    Refresh { err: Refresh }
+    /// Error while creating the [PollThread].
+    Poll {
+        /// The error that occurred while creating [StreamSelector]s.
+        err: Poll
+    },
 }
 
-impl<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Ctx
-    >
-    UnicastDatagramBus<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Ctx
-    >
+impl<Ctx, Types> UnicastDatagramBus<Ctx, Types>
 where
-    Msg: 'static + Clone + Send,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    SessionAuth: 'static
-        + Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: 'static
-        + Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: 'static
-        + OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        >
-        + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm: 'static
-        + DatagramXfrm
-        + DatagramXfrmCreate<Addr = Channel::Param>
-        + Send
-        + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Ctx: 'static
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
-    Endpoint: 'static + Send,
-    Resolver: 'static
-        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin: 'static
-        + Clone
-        + Eq
-        + Hash
-        + Into<Option<IPEndpointAddr>>
-        + Send
-        + Sync
+    Ctx: 'static + Send,
+    Types: 'static + UnicastDatagramBusTypes<Ctx>
 {
     pub fn create(
         config: UnicastDatagramBusConfig<
-            ChannelRegistryChannelsConfig<MsgCodec::Param>,
-            Epochs::Config,
-            Endpoint
-        >,
-        listener: ThreadedFlowsListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
+            Types::ChansConfig,
+            Types::EpochsConfig,
+            Types::MsgAuthConfig,
+            Types::Addr
         >,
         mut ctx: Ctx,
-        shutdown: ShutdownFlag,
-        sender_notify: Notify,
-        upstream_msg_recv: Recv,
-        msgs: Msgs
+        recv: Types::Recv,
+        msgs: Types::Msgs
     ) -> Result<
         Self,
         UnicastDatagramBusCreateError<
-            FarChannelRegistryAcquireError<
-                RegistryAcquireError<
-                    Channel::AcquireError,
-                    <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
-                    FarChannelFlowsError<
-                        Channel::SocketError,
-                        F::CreateError,
-                        Channel::XfrmError
-                    >,
-                    <Channel::Acquired as FarChannelAcquired>::WrapError
-                >
-            >,
-            MsgCodec::CreateError,
             StreamSelectorCreateError<
-                FarChannelRegistryChannelsCreateError<MsgCodec::CreateError>,
-                Resolver::CreateError
+                Types::ResolveCreateError,
+                Types::EpochsCreateError
             >,
-            ThreadedStreamSelectorError<
-                Resolver::AddrsError,
-                FarChannelRegistryAcquireError<
-                    RegistryAcquireError<
-                        Channel::AcquireError,
-                        <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
-                        FarChannelFlowsError<
-                            Channel::SocketError,
-                            F::CreateError,
-                            Channel::XfrmError
-                        >,
-                        <Channel::Acquired as FarChannelAcquired>::WrapError
-                    >
-                >
+            PollThreadCreateError<
+                Types::ModeCreateError,
+                Types::ChansCreateError,
+                Types::MsgAuthCreateError
             >
         >
-    >{
+    > {
         info!(target: "unicast-small-obj-bus",
-              "creating unicast comm");
+              "creating unicast bus");
 
-        debug!(target: "unicast-small-obj-bus",
-               "initializing channels");
+        let (party_config, poll_config) = config.take();
 
-        // Bring up all channels.
-        ctx.far_channel_registry()
-            .acquire_all(&mut ctx)
-            .map_err(|err| UnicastDatagramBusCreateError::Acquire {
-                err: err
-            })?;
-
-        // Bring up the pull-side.
-        debug!(target: "unicast-small-obj-bus",
-               "initializing pull streams");
-
-        let (party_config, mode_config) = config.take();
-
-        // ISSUE #1: get the codec config properly
-        let msg_codec =
-            MsgCodec::create(MsgCodec::Param::default()).map_err(|err| {
-                UnicastDatagramBusCreateError::MsgCodec { err: err }
-            })?;
-        let listener =
-            ThreadedFlowsPullStreamListener::create(listener, msg_codec);
-        let (pull_streams, pull_listener) = PullStreams::with_capacity(
-            listener,
-            upstream_msg_recv,
-            shutdown.clone(),
-            PassthruMsgAuthN::default(),
-            1
-        );
-        let stream_reporter = pull_streams.reporter();
-
-        // Bring up the push-side.
         debug!(target: "unicast-small-obj-bus",
                "initializing push streams");
 
-        let mut stream = StreamSelector::<
-            Epochs,
-            FarChannelRegistryChannels<
-                Msg,
-                MsgCodec,
-                PullStreamsReporter<Msg, _, _, _, _>,
-                Channel,
-                F,
-                SessionAuth,
-                Xfrm
-            >,
-            Resolver,
-            Ctx
+        let stream = StreamSelector::<
+            Types::Epochs,
+            Types::Resolve,
+            PollThreadCtx<Types::Chans, Ctx>
         >::create(
             &mut ctx,
-            shutdown.clone(),
-            stream_reporter.clone(),
             party_config
         )
         .map_err(|err| UnicastDatagramBusCreateError::Stream { err: err })?;
+        let poll = PollThread::create(poll_config, ctx, recv, msgs, stream)
+            .map_err(|err| UnicastDatagramBusCreateError::Poll { err: err })?;
 
-        // Refresh the streams to ensure no bad stream
-        // reporting.
-        stream.refresh(&mut ctx).map_err(|err| {
-            UnicastDatagramBusCreateError::Refresh { err: err }
-        })?;
-
-        let reporter = stream.reporter();
-        let sender = PushStreamThread::create(
-            mode_config,
-            ctx,
-            msgs,
-            sender_notify.clone(),
-            stream,
-            shutdown.clone()
-        );
-
-        Ok(UnicastDatagramBus {
-            endpoint: PhantomData,
-            reporter: reporter,
-            pull: pull_listener,
-            push: sender
-        })
+        Ok(UnicastDatagramBus { poll: poll })
     }
 
     #[inline]
-    pub fn notify(&self) -> Notify {
-        self.push.notify()
+    pub fn notify(&self) -> Arc<Waker> {
+        self.poll.notify()
     }
 
     /// Consume this `UnicastDatagramBus`, start the threads, and return a
     /// cleanup object.
     pub fn start(self) -> Result<UnicastDatagramBusCleanup, Error> {
-        let UnicastDatagramBus {
-            pull,
-            push,
-            reporter,
-            ..
-        } = self;
-        let pull_join = pull.start(reporter)?;
-        let notify = push.notify();
-        let sender_join = push.start()?;
+        let UnicastDatagramBus { poll } = self;
+        let poll_join = poll.start()?;
 
         Ok(UnicastDatagramBusCleanup {
-            notify: notify,
-            sender_join: sender_join,
-            pull_join: pull_join
+            poll_join: poll_join
         })
     }
 }
 
 impl UnicastDatagramBusCleanup {
     pub fn cleanup(self) {
-        if let Err(err) = self.notify.notify() {
-            error!(target: "unicast-small-obj-bus-cleanup",
-                   "error notifying sender: {}",
-                   err)
-        }
-
         debug!(target: "unicast-small-obj-bus-cleanup",
-               "joining sender");
+               "joining poll thread");
 
-        if self.sender_join.join().is_err() {
+        if self.poll_join.join().is_err() {
             error!(target: "unicast-small-obj-bus-cleanup",
-                   "error joining sender")
-        }
-
-        debug!(target: "unicast-small-obj-bus-cleanup",
-               "joining pull streams");
-
-        if self.pull_join.join().is_err() {
-            error!(target: "unicast-small-obj-bus-cleanup",
-                   "error joining pull streams listener")
+                   "error joining poll thread")
         }
     }
 }
 
-impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh>
+impl<Stream, Poll> Display for UnicastDatagramBusCreateError<Stream, Poll>
 where
-    Acquire: Display,
-    MsgCodec: Display,
     Stream: Display,
-    Refresh: Display
+    Poll: Display
 {
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            UnicastDatagramBusCreateError::Acquire { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::MsgCodec { err } => err.fmt(f),
             UnicastDatagramBusCreateError::Stream { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::Refresh { err } => err.fmt(f)
+            UnicastDatagramBusCreateError::Poll { err } => err.fmt(f),
         }
     }
 }
