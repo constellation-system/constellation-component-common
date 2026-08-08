@@ -25,8 +25,8 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 
 use constellation_common::codec::per::PERCodec;
-use constellation_common::codec::Encoder;
 use constellation_common::codec::Decoder;
+use constellation_common::codec::Encoder;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
@@ -275,8 +275,8 @@ impl<H> Create for ConsensusCtlSubmitCodec<H>
 where
     H: Default + HashAlgo
 {
-    type CreateError = Infallible;
     type Config = ();
+    type CreateError = Infallible;
 
     #[inline]
     fn create(_param: Self::Config) -> Result<Self, Self::CreateError> {
@@ -397,8 +397,8 @@ where
     H: Default + HashAlgo,
     SealCodec: Create
 {
-    type CreateError = SealCodec::CreateError;
     type Config = SealCodec::Config;
+    type CreateError = SealCodec::CreateError;
 
     #[inline]
     fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
@@ -605,8 +605,8 @@ where
     H: Default + HashAlgo,
     SealCodec: Create
 {
-    type CreateError = SealCodec::CreateError;
     type Config = SealCodec::Config;
+    type CreateError = SealCodec::CreateError;
 
     #[inline]
     fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
@@ -623,7 +623,8 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec> Encoder<ConsensusCtl<RoundID, H::HashID, Seal>>
+impl<RoundID, H, Seal, SealCodec>
+    Encoder<ConsensusCtl<RoundID, H::HashID, Seal>>
     for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
@@ -766,7 +767,8 @@ where
     }
 }
 
-impl<RoundID, H, Seal, SealCodec> Decoder<ConsensusCtl<RoundID, H::HashID, Seal>>
+impl<RoundID, H, Seal, SealCodec>
+    Decoder<ConsensusCtl<RoundID, H::HashID, Seal>>
     for ConsensusCtlCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
@@ -1041,8 +1043,8 @@ pub struct TestSealCodec;
 
 #[cfg(test)]
 impl Create for TestSealCodec {
-    type CreateError = Infallible;
     type Config = ();
+    type CreateError = Infallible;
 
     #[inline]
     fn create(_param: ()) -> Result<Self, Infallible> {

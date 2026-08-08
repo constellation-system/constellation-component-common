@@ -23,8 +23,8 @@ use std::hash::Hash;
 use std::io::Error;
 use std::thread::JoinHandle;
 
-use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::AuthNMsgRecv;
+use constellation_auth::authn::AuthNed;
 use constellation_channels::config::ResolverConfig;
 use constellation_common::error::ScopedError;
 use constellation_common::retry::Retry;
@@ -41,7 +41,8 @@ use log::info;
 use crate::config::MulticastBusConfig;
 
 pub trait MulticastBusTypes<Ctx>
-where Ctx: 'static + Send {
+where
+    Ctx: 'static + Send {
     type Addr: 'static + Clone + Debug + Display + Eq + Hash + Send;
     type InMsg;
     type SessionPrin: Clone + Display + Eq + Hash;
@@ -78,12 +79,7 @@ where Ctx: 'static + Send {
         StreamConfig = StreamMulticasterConfig<
             Self::SessionPrin,
             Retry,
-            PartyConfig<
-                ResolverConfig,
-                Self::EpochsConfig,
-                String,
-                Self::Addr
-            >,
+            PartyConfig<ResolverConfig, Self::EpochsConfig, String, Self::Addr>
         >,
         StreamCreateError = StreamSelectorCreateError<
             Self::ResolveCreateError,
@@ -122,21 +118,17 @@ pub enum MulticastBusCreateError<Poll> {
 impl<Types, Ctx> MulticastBus<Types, Ctx>
 where
     Ctx: 'static + Send,
-    Types: 'static + MulticastBusTypes<Ctx> {
+    Types: 'static + MulticastBusTypes<Ctx>
+{
     pub fn create(
         self_party: Option<Types::SessionPrin>,
         config: MulticastBusConfig<
             Types::ChansConfig,
+            Types::EpochsConfig,
             Types::SessionPrin,
             Types::ModeConfig,
-            Retry,
-            PartyConfig<
-                ResolverConfig,
-                Types::EpochsConfig,
-                String,
-                Types::Addr
-            >,
             Types::MsgAuthConfig,
+            Types::Addr
         >,
         ctx: Ctx,
         recv: Types::Recv,
@@ -154,7 +146,7 @@ where
                 Types::MsgAuthCreateError
             >
         >
-    >{
+    > {
         info!(target: "multicast-bus",
               "creating multicast bus");
 
@@ -162,9 +154,7 @@ where
         let poll = PollThread::create(poll_config, ctx, recv, msgs)
             .map_err(|err| MulticastBusCreateError::Poll { err: err })?;
 
-        Ok(MulticastBus {
-            poll: poll
-        })
+        Ok(MulticastBus { poll: poll })
     }
 
     /// Consume this `MulticastBus`, start the threads, and return a

@@ -17,26 +17,83 @@
 // <https://www.gnu.org/licenses/>.
 
 use constellation_channels::config::ResolverConfig;
+use constellation_common::retry::Retry;
 use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::DispatchThreadConfig;
 use constellation_streams::config::PartyConfig;
 use constellation_streams::config::PollThreadConfig;
+use constellation_streams::config::PrivateDatagramModeConfig;
+use constellation_streams::config::PrivateLargeObjModeConfig;
+use constellation_streams::config::SharedDatagramModeConfig;
+use constellation_streams::config::SharedLargeObjModeConfig;
 use constellation_streams::config::StreamMulticasterConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
+pub type MulticastDatagramBusConfig<
+    Channels,
+    Epochs,
+    PartyID,
+    AuthN,
+    Endpoint
+> = MulticastBusConfig<
+    Channels,
+    Epochs,
+    PartyID,
+    SharedDatagramModeConfig,
+    AuthN,
+    Endpoint
+>;
+
+pub type MulticastLargeObjBusConfig<
+    Channels,
+    Epochs,
+    PartyID,
+    AuthN,
+    Endpoint
+> = MulticastBusConfig<
+    Channels,
+    Epochs,
+    PartyID,
+    SharedLargeObjModeConfig,
+    AuthN,
+    Endpoint
+>;
+
+pub type UnicastDatagramBusConfig<Channels, Epochs, AuthN, Endpoint> =
+    UnicastBusConfig<
+        Channels,
+        Epochs,
+        PrivateDatagramModeConfig,
+        AuthN,
+        Endpoint
+    >;
+
+pub type UnicastLargeObjBusConfig<Channels, Epochs, AuthN, Endpoint> =
+    UnicastBusConfig<
+        Channels,
+        Epochs,
+        PrivateLargeObjModeConfig,
+        AuthN,
+        Endpoint
+    >;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "multicast-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct MulticastBusConfig<Channels, PartyID, Mode, Frags, Stream, AuthN>
+pub struct MulticastBusConfig<Channels, Epochs, PartyID, Mode, AuthN, Endpoint>
 where
     Mode: Default,
-    Frags: Default {
+    Epochs: Default {
     #[serde(flatten)]
     thread: PollThreadConfig<
         Channels,
         Mode,
-        StreamMulticasterConfig<PartyID, Frags, Stream>,
+        StreamMulticasterConfig<
+            PartyID,
+            Retry,
+            PartyConfig<ResolverConfig, Epochs, String, Endpoint>
+        >,
         AuthN
     >
 }
@@ -57,9 +114,7 @@ where
     >
 }
 
-#[derive(
-    Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "dispatch-datagram-bus")]
 #[serde(rename_all = "kebab-case")]
 pub struct DispatchDatagramBusConfig<Channels, Mode, Epochs, Auth>
@@ -71,7 +126,7 @@ where
     #[serde(flatten)]
     dispatch: DispatchConfig<Epochs>,
     #[serde(flatten)]
-    thread: DispatchThreadConfig<Channels, Mode>,
+    thread: DispatchThreadConfig<Channels, Mode>
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
@@ -104,7 +159,7 @@ impl<Channels, Mode, Epochs, Auth>
     DispatchDatagramBusConfig<Channels, Mode, Epochs, Auth>
 where
     Mode: Default,
-    Epochs: Default,
+    Epochs: Default
 {
     #[inline]
     pub fn create(
@@ -137,7 +192,11 @@ where
     #[inline]
     pub fn take(
         self
-    ) -> (Auth, DispatchConfig<Epochs>, DispatchThreadConfig<Channels, Mode>) {
+    ) -> (
+        Auth,
+        DispatchConfig<Epochs>,
+        DispatchThreadConfig<Channels, Mode>
+    ) {
         (self.auth, self.dispatch, self.thread)
     }
 }
@@ -146,7 +205,8 @@ impl<Channels, Epochs, Mode, AuthN, Endpoint>
     UnicastBusConfig<Channels, Epochs, Mode, AuthN, Endpoint>
 where
     Mode: Default,
-    Epochs: Default {
+    Epochs: Default
+{
     #[inline]
     pub fn create(
         thread: PollThreadConfig<
@@ -156,9 +216,7 @@ where
             AuthN
         >
     ) -> UnicastBusConfig<Channels, Epochs, Mode, AuthN, Endpoint> {
-        UnicastBusConfig {
-            thread: thread
-        }
+        UnicastBusConfig { thread: thread }
     }
 
     #[inline]
@@ -186,24 +244,26 @@ where
     }
 }
 
-impl<Channels, PartyID, Mode, Frags, Stream, AuthN>
-    MulticastBusConfig<Channels, PartyID, Mode, Frags, Stream, AuthN>
+impl<Channels, Epochs, PartyID, Mode, AuthN, Endpoint>
+    MulticastBusConfig<Channels, Epochs, PartyID, Mode, AuthN, Endpoint>
 where
     Mode: Default,
-    Frags: Default
+    Epochs: Default
 {
     #[inline]
     pub fn create(
         thread: PollThreadConfig<
             Channels,
             Mode,
-            StreamMulticasterConfig<PartyID, Frags, Stream>,
+            StreamMulticasterConfig<
+                PartyID,
+                Retry,
+                PartyConfig<ResolverConfig, Epochs, String, Endpoint>
+            >,
             AuthN
         >
-    ) -> MulticastBusConfig<Channels, PartyID, Mode, Frags, Stream, AuthN> {
-        MulticastBusConfig {
-            thread: thread
-        }
+    ) -> Self {
+        MulticastBusConfig { thread: thread }
     }
 
     #[inline]
@@ -212,7 +272,11 @@ where
     ) -> &PollThreadConfig<
         Channels,
         Mode,
-        StreamMulticasterConfig<PartyID, Frags, Stream>,
+        StreamMulticasterConfig<
+            PartyID,
+            Retry,
+            PartyConfig<ResolverConfig, Epochs, String, Endpoint>
+        >,
         AuthN
     > {
         &self.thread
@@ -224,7 +288,11 @@ where
     ) -> PollThreadConfig<
         Channels,
         Mode,
-        StreamMulticasterConfig<PartyID, Frags, Stream>,
+        StreamMulticasterConfig<
+            PartyID,
+            Retry,
+            PartyConfig<ResolverConfig, Epochs, String, Endpoint>
+        >,
         AuthN
     > {
         self.thread

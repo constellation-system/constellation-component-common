@@ -23,8 +23,8 @@ use std::hash::Hash;
 use std::io::Error;
 use std::thread::JoinHandle;
 
-use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::AuthNMsgRecv;
+use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::MsgAuthN;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
@@ -104,9 +104,9 @@ pub trait DispatcherTypes<Ctx> {
     type EpochsConfig: Clone + Default;
     type EpochsCreateError: Debug + Display + ScopedError;
     type Epochs: Create<
-        Config = Self::EpochsConfig,
-        CreateError = Self::EpochsCreateError
-    > + Iterator<Item = Self::Epoch>;
+            Config = Self::EpochsConfig,
+            CreateError = Self::EpochsCreateError
+        > + Iterator<Item = Self::Epoch>;
     type Msgs: PrivateMsgs<Self::OutMsg>;
     type RecvError: Debug + Display + ScopedError;
     type Recv: 'static
@@ -164,11 +164,9 @@ pub trait DispatchBusTypes<Ctx> {
         OutMsg = Self::OutMsg,
         AuthNMsg = Self::AuthNMsg,
         SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin,
+        MsgPrin = Self::MsgPrin
     >;
-    type SessionDisp: SessionDispatch<
-        Self::SessionDispTypes,
-    >;
+    type SessionDisp: SessionDispatch<Self::SessionDispTypes>;
     type DispTypes: DispatcherTypes<
         Ctx,
         InMsg = Self::InMsg,
@@ -207,8 +205,8 @@ where
     ///
     /// - `prin`: The principal for which the session is being created.
     ///
-    /// - `shutdown`: The [ShutdownFlag] from which to derive this
-    ///   session's `ShutdownFlag`.
+    /// - `shutdown`: The [ShutdownFlag] from which to derive this session's
+    ///   `ShutdownFlag`.
     ///
     /// - `notify`: The [Notify] to use to signal available messages.
     fn session(
@@ -255,17 +253,18 @@ pub struct DispatchDatagramBusCleanup {
 }
 
 pub struct DispatchDatagramBus<Types, Ctx>
-where Types: DispatchBusTypes<Ctx> {
+where
+    Types: DispatchBusTypes<Ctx> {
     dispatch: DispatchThread<Types::DispThreadTypes, Ctx>
 }
 
 pub struct Dispatcher<Types, Ctx>
-where Types: DispatcherTypes<Ctx> {
+where
+    Types: DispatcherTypes<Ctx> {
     session: Types::SessionDisp,
     config: DispatchConfig<Types::EpochsConfig>,
     auth_config: Types::MsgAuthConfig
 }
-
 
 impl<Types, Ctx> Dispatch<Types::DispInboundTypes, Ctx>
     for Dispatcher<Types, Ctx>
@@ -280,11 +279,7 @@ where
     type Msgs = Types::Msgs;
     type PushStream = DispatchSelector<
         Types::Epochs,
-        StreamID<
-            Types::Addr,
-            Types::ChannelID,
-            Types::ChannelParam
-        >,
+        StreamID<Types::Addr, Types::ChannelID, Types::ChannelParam>,
         Types::Chan,
         Ctx
     >;
@@ -321,13 +316,17 @@ where
 }
 
 impl<Types, Ctx> DispatchDatagramBus<Types, Ctx>
-where Types: 'static + DispatchBusTypes<Ctx>,
-      Ctx: 'static + Send {
+where
+    Types: 'static + DispatchBusTypes<Ctx>,
+    Ctx: 'static + Send
+{
     pub fn create(
-        config: DispatchDatagramBusConfig<Types::ChansConfig,
-                                          Types::ModeConfig,
-                                          Types::EpochsConfig,
-                                          Types::MsgAuthConfig>,
+        config: DispatchDatagramBusConfig<
+            Types::ChansConfig,
+            Types::ModeConfig,
+            Types::EpochsConfig,
+            Types::MsgAuthConfig
+        >,
         session: Types::SessionDisp,
         ctx: Ctx
     ) -> Result<

@@ -16,16 +16,16 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-use std::fmt::Display;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::io::Error;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::AuthNMsgRecv;
+use constellation_auth::authn::AuthNed;
 use constellation_channels::config::ResolverConfig;
 use constellation_common::error::ScopedError;
 use constellation_streams::config::PartyConfig;
@@ -41,7 +41,8 @@ use mio::Waker;
 use crate::config::UnicastBusConfig;
 
 pub trait UnicastBusTypes<Ctx>
-where Ctx: 'static + Send {
+where
+    Ctx: 'static + Send {
     type Addr: 'static + Clone + Debug + Display + Eq + Hash + Send;
     type InMsg;
     type MsgPrin: Clone + Display + Eq + Hash;
@@ -95,8 +96,7 @@ where Ctx: 'static + Send {
 pub struct UnicastBus<Ctx, Types>
 where
     Ctx: 'static + Send,
-    Types: UnicastBusTypes<Ctx>
-{
+    Types: UnicastBusTypes<Ctx> {
     poll: PollThread<Ctx, Types::ThreadTypes>
 }
 
@@ -112,7 +112,7 @@ pub enum UnicastBusCreateError<Poll> {
     Poll {
         /// The error that occurred while creating [StreamSelector]s.
         err: Poll
-    },
+    }
 }
 
 impl<Ctx, Types> UnicastBus<Ctx, Types>
@@ -185,13 +185,15 @@ impl UnicastBusCleanup {
 }
 
 impl<Poll> Display for UnicastBusCreateError<Poll>
-where Poll: Display {
+where
+    Poll: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            UnicastBusCreateError::Poll { err } => err.fmt(f),
+            UnicastBusCreateError::Poll { err } => err.fmt(f)
         }
     }
 }
