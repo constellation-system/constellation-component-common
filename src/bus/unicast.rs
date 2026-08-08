@@ -26,66 +26,27 @@ use std::thread::JoinHandle;
 
 use constellation_auth::authn::AuthNed;
 use constellation_auth::authn::AuthNMsgRecv;
-use constellation_common::config::Create;
-use constellation_common::config::CreateWithParam;
+use constellation_channels::config::ResolverConfig;
 use constellation_common::error::ScopedError;
-use constellation_common::retry::RetryWhen;
-use constellation_streams::addrs::Addrs;
-use constellation_streams::addrs::AddrsCreate;
-use constellation_streams::channels::Channels;
-use constellation_streams::channels::ChannelsListen;
-use constellation_streams::channels::ChannelsShutdown;
-use constellation_streams::config::PrivateDatagramModeConfig;
-use constellation_streams::stream::PullStream;
-use constellation_streams::stream::PushStream;
-use constellation_streams::select::StreamSelector;
+use constellation_streams::config::PartyConfig;
 use constellation_streams::select::StreamSelectorCreateError;
 use constellation_streams::threads::poll::PollThread;
 use constellation_streams::threads::poll::PollThreadCreateError;
-use constellation_streams::threads::poll::PollThreadCtx;
 use constellation_streams::threads::poll::PollThreadTypes;
 use log::debug;
 use log::error;
 use log::info;
 use mio::Waker;
 
-use crate::config::UnicastDatagramBusConfig;
+use crate::config::UnicastBusConfig;
 
-pub trait UnicastDatagramBusTypes<Ctx>
+pub trait UnicastBusTypes<Ctx>
 where Ctx: 'static + Send {
     type Addr: 'static + Clone + Debug + Display + Eq + Hash + Send;
-    type ChannelParam: 'static + Clone + Debug + Display + Eq + Hash + Send;
-    type ChannelID: 'static + Clone + Debug + Display + Eq + Hash + Send;
-    type SessionPrin: Display;
     type InMsg;
     type MsgPrin: Clone + Display + Eq + Hash;
     type AuthNMsg: AuthNed<Self::MsgPrin, Self::InMsg>;
-    type Wrapper;
-    type PullError: Debug + Display + ScopedError;
-    type Chan: Clone + PullStream<Self::Wrapper, PullError = Self::PullError>;
-    type AuthNChan: 'static
-        + Clone
-        + AuthNed<Self::SessionPrin, Self::Chan>
-        + PushStream<PollThreadCtx<Self::Chans, Ctx>>
-        + Send;
-    type EpochsConfig: Default;
-    type EpochsCreateError: Debug + Display;
-    type Epochs: Iterator<Item = u128>
-        + Create<Config = Self::EpochsConfig,
-                 CreateError = Self::EpochsCreateError>;
-    type MsgAuthConfig;
-    type MsgAuthCreateError: Debug + Display;
     type Msgs: 'static + Send;
-    type ResolveConfig: Clone + Default;
-    type ResolveOrigin: Clone + Display + Eq + Hash;
-    type ResolveCreateError: Debug + Display;
-    type Resolve: Addrs<Addr = Self::Addr>
-        + AddrsCreate<
-            PollThreadCtx<Self::Chans, Ctx>,
-            Config = Self::ResolveConfig,
-            Origin = Self::ResolveOrigin,
-            CreateError = Self::ResolveCreateError
-        >;
     type RecvError: Debug + Display + ScopedError;
     type Recv: 'static
         + AuthNMsgRecv<
@@ -95,77 +56,58 @@ where Ctx: 'static + Send {
             RecvError = Self::RecvError
         >
         + Send;
+    type ResolveCreateError: Debug + Display;
+    type MsgAuthConfig;
+    type MsgAuthCreateError: Debug + Display;
+    type EpochsConfig: Default;
+    type EpochsCreateError: Debug + Display;
+    type ModeConfig: Default;
     type ModeCreateError: Debug + Display;
-    type ChansOutNegoParam: Clone + Eq + Hash;
     type ChansConfig;
     type ChansCreateError: Debug + Display;
-    type ChanShutdownError: Debug + Display + ScopedError;
-    type ChanShutdownRetry: RetryWhen;
-    type Chans: 'static
-        + for<'a> CreateWithParam<
-            &'a mut Ctx,
-            Config = Self::ChansConfig,
-            CreateError = Self::ChansCreateError,
-        >
-        + Channels<
-            Ctx,
-            Addr = Self::Addr,
-            Param = Self::ChannelParam,
-            Stream = Self::AuthNChan,
-            ChannelID = Self::ChannelID,
-            OutNegoParam = Self::ChansOutNegoParam
-        >
-        + ChannelsListen<Ctx>
-        + ChannelsShutdown<
-            Ctx,
-            ShutdownStreamError = Self::ChanShutdownError,
-            ShutdownStreamRetry = Self::ChanShutdownRetry
-        >
-        + Send;
     type ThreadTypes: PollThreadTypes<
         Ctx,
         Addr = Self::Addr,
         InMsg = Self::InMsg,
-        SessionPrin = Self::SessionPrin,
         MsgPrin = Self::MsgPrin,
         AuthNMsg = Self::AuthNMsg,
         Recv = Self::Recv,
         Msgs = Self::Msgs,
-        Stream = StreamSelector<
-            Self::Epochs,
-            Self::Resolve,
-            PollThreadCtx<Self::Chans, Ctx>
+        ChansConfig = Self::ChansConfig,
+        StreamConfig = PartyConfig<
+            ResolverConfig,
+            Self::EpochsConfig,
+            String,
+            Self::Addr
+        >,
+        StreamCreateError = StreamSelectorCreateError<
+            Self::ResolveCreateError,
+            Self::EpochsCreateError
         >,
         MsgAuthConfig = Self::MsgAuthConfig,
-        ChansConfig = Self::ChansConfig,
-        MsgAuthCreateError = Self::MsgAuthCreateError,
-        ModeConfig = PrivateDatagramModeConfig,
+        ModeConfig = Self::ModeConfig,
         ModeCreateError = Self::ModeCreateError,
+        MsgAuthCreateError = Self::MsgAuthCreateError,
         ChansCreateError = Self::ChansCreateError
     >;
 }
 
-pub struct UnicastDatagramBus<Ctx, Types>
+pub struct UnicastBus<Ctx, Types>
 where
     Ctx: 'static + Send,
-    Types: UnicastDatagramBusTypes<Ctx>
+    Types: UnicastBusTypes<Ctx>
 {
     poll: PollThread<Ctx, Types::ThreadTypes>
 }
 
-/// Cleanup object for [UnicastDatagramBus].
-pub struct UnicastDatagramBusCleanup {
+/// Cleanup object for [UnicastBus].
+pub struct UnicastBusCleanup {
     poll_join: JoinHandle<()>
 }
 
-/// Type of errors that can occur when creating a [UnicastDatagramBus].
+/// Type of errors that can occur when creating a [UnicastBus].
 #[derive(Debug)]
-pub enum UnicastDatagramBusCreateError<Stream, Poll> {
-    /// Error while creating the [StreamSelector].
-    Stream {
-        /// The error that occurred while creating [StreamSelector]s.
-        err: Stream
-    },
+pub enum UnicastBusCreateError<Poll> {
     /// Error while creating the [PollThread].
     Poll {
         /// The error that occurred while creating [StreamSelector]s.
@@ -173,56 +115,44 @@ pub enum UnicastDatagramBusCreateError<Stream, Poll> {
     },
 }
 
-impl<Ctx, Types> UnicastDatagramBus<Ctx, Types>
+impl<Ctx, Types> UnicastBus<Ctx, Types>
 where
     Ctx: 'static + Send,
-    Types: 'static + UnicastDatagramBusTypes<Ctx>
+    Types: 'static + UnicastBusTypes<Ctx>
 {
     pub fn create(
-        config: UnicastDatagramBusConfig<
+        config: UnicastBusConfig<
             Types::ChansConfig,
             Types::EpochsConfig,
+            Types::ModeConfig,
             Types::MsgAuthConfig,
             Types::Addr
         >,
-        mut ctx: Ctx,
+        ctx: Ctx,
         recv: Types::Recv,
         msgs: Types::Msgs
     ) -> Result<
         Self,
-        UnicastDatagramBusCreateError<
-            StreamSelectorCreateError<
-                Types::ResolveCreateError,
-                Types::EpochsCreateError
-            >,
+        UnicastBusCreateError<
             PollThreadCreateError<
                 Types::ModeCreateError,
                 Types::ChansCreateError,
+                StreamSelectorCreateError<
+                    Types::ResolveCreateError,
+                    Types::EpochsCreateError
+                >,
                 Types::MsgAuthCreateError
             >
         >
     > {
-        info!(target: "unicast-small-obj-bus",
+        info!(target: "unicast-bus",
               "creating unicast bus");
 
-        let (party_config, poll_config) = config.take();
+        let poll_config = config.take();
+        let poll = PollThread::create(poll_config, ctx, recv, msgs)
+            .map_err(|err| UnicastBusCreateError::Poll { err: err })?;
 
-        debug!(target: "unicast-small-obj-bus",
-               "initializing push streams");
-
-        let stream = StreamSelector::<
-            Types::Epochs,
-            Types::Resolve,
-            PollThreadCtx<Types::Chans, Ctx>
-        >::create(
-            &mut ctx,
-            party_config
-        )
-        .map_err(|err| UnicastDatagramBusCreateError::Stream { err: err })?;
-        let poll = PollThread::create(poll_config, ctx, recv, msgs, stream)
-            .map_err(|err| UnicastDatagramBusCreateError::Poll { err: err })?;
-
-        Ok(UnicastDatagramBus { poll: poll })
+        Ok(UnicastBus { poll: poll })
     }
 
     #[inline]
@@ -230,42 +160,38 @@ where
         self.poll.notify()
     }
 
-    /// Consume this `UnicastDatagramBus`, start the threads, and return a
+    /// Consume this `UnicastBus`, start the threads, and return a
     /// cleanup object.
-    pub fn start(self) -> Result<UnicastDatagramBusCleanup, Error> {
-        let UnicastDatagramBus { poll } = self;
+    pub fn start(self) -> Result<UnicastBusCleanup, Error> {
+        let UnicastBus { poll } = self;
         let poll_join = poll.start()?;
 
-        Ok(UnicastDatagramBusCleanup {
+        Ok(UnicastBusCleanup {
             poll_join: poll_join
         })
     }
 }
 
-impl UnicastDatagramBusCleanup {
+impl UnicastBusCleanup {
     pub fn cleanup(self) {
-        debug!(target: "unicast-small-obj-bus-cleanup",
+        debug!(target: "unicast-bus-cleanup",
                "joining poll thread");
 
         if self.poll_join.join().is_err() {
-            error!(target: "unicast-small-obj-bus-cleanup",
+            error!(target: "unicast-bus-cleanup",
                    "error joining poll thread")
         }
     }
 }
 
-impl<Stream, Poll> Display for UnicastDatagramBusCreateError<Stream, Poll>
-where
-    Stream: Display,
-    Poll: Display
-{
+impl<Poll> Display for UnicastBusCreateError<Poll>
+where Poll: Display {
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            UnicastDatagramBusCreateError::Stream { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::Poll { err } => err.fmt(f),
+            UnicastBusCreateError::Poll { err } => err.fmt(f),
         }
     }
 }

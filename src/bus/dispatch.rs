@@ -259,7 +259,7 @@ where Types: DispatchBusTypes<Ctx> {
     dispatch: DispatchThread<Types::DispThreadTypes, Ctx>
 }
 
-struct Dispatcher<Types, Ctx>
+pub struct Dispatcher<Types, Ctx>
 where Types: DispatcherTypes<Ctx> {
     session: Types::SessionDisp,
     config: DispatchConfig<Types::EpochsConfig>,

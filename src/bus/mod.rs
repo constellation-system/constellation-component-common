@@ -17,6 +17,5 @@
 // <https://www.gnu.org/licenses/>.
 
 pub mod dispatch;
-pub mod large_obj;
 pub mod multicast;
 pub mod unicast;
