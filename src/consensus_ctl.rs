@@ -24,9 +24,9 @@ use std::fmt::Error;
 use std::fmt::Formatter;
 use std::marker::PhantomData;
 
-use constellation_common::codec::per::PERCodec;
 use constellation_common::codec::Decoder;
 use constellation_common::codec::Encoder;
+use constellation_common::codec::per::PERCodec;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;

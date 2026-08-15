@@ -67,33 +67,33 @@ where
     type ChansConfig;
     type ChansCreateError: Debug + Display;
     type ThreadTypes: PollThreadTypes<
-        Ctx,
-        Addr = Self::Addr,
-        InMsg = Self::InMsg,
-        MsgPrin = Self::MsgPrin,
-        AuthNMsg = Self::AuthNMsg,
-        Recv = Self::Recv,
-        Msgs = Self::Msgs,
-        ChansConfig = Self::ChansConfig,
-        StreamConfig = PartyConfig<
-            ResolverConfig,
-            Self::EpochsConfig,
-            String,
-            Self::Addr
-        >,
-        StreamCreateError = StreamSelectorCreateError<
-            Self::ResolveCreateError,
-            Self::EpochsCreateError
-        >,
-        MsgAuthConfig = Self::MsgAuthConfig,
-        ModeConfig = Self::ModeConfig,
-        ModeCreateError = Self::ModeCreateError,
-        MsgAuthCreateError = Self::MsgAuthCreateError,
-        ChansCreateError = Self::ChansCreateError
-    >;
+            Ctx,
+            Addr = Self::Addr,
+            InMsg = Self::InMsg,
+            MsgPrin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            Recv = Self::Recv,
+            Msgs = Self::Msgs,
+            ChansConfig = Self::ChansConfig,
+            StreamConfig = PartyConfig<
+                ResolverConfig,
+                Self::EpochsConfig,
+                String,
+                Self::Addr
+            >,
+            StreamCreateError = StreamSelectorCreateError<
+                Self::ResolveCreateError,
+                Self::EpochsCreateError
+            >,
+            MsgAuthConfig = Self::MsgAuthConfig,
+            ModeConfig = Self::ModeConfig,
+            ModeCreateError = Self::ModeCreateError,
+            MsgAuthCreateError = Self::MsgAuthCreateError,
+            ChansCreateError = Self::ChansCreateError
+        >;
 }
 
-pub struct UnicastBus<Ctx, Types>
+pub struct UnicastBus<Types, Ctx>
 where
     Ctx: 'static + Send,
     Types: UnicastBusTypes<Ctx> {
@@ -115,7 +115,7 @@ pub enum UnicastBusCreateError<Poll> {
     }
 }
 
-impl<Ctx, Types> UnicastBus<Ctx, Types>
+impl<Ctx, Types> UnicastBus<Types, Ctx>
 where
     Ctx: 'static + Send,
     Types: 'static + UnicastBusTypes<Ctx>

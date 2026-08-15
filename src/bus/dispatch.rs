@@ -118,30 +118,30 @@ pub trait DispatcherTypes<Ctx> {
         >
         + Send;
     type SessionDispTypes: SessionDispatchTypes<
-        InMsg = Self::InMsg,
-        OutMsg = Self::OutMsg,
-        Msgs = Self::Msgs,
-        AuthNMsg = Self::AuthNMsg,
-        SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin,
-        Recv = Self::Recv,
-        RecvError = Self::RecvError
-    >;
+            InMsg = Self::InMsg,
+            OutMsg = Self::OutMsg,
+            Msgs = Self::Msgs,
+            AuthNMsg = Self::AuthNMsg,
+            SessionPrin = Self::SessionPrin,
+            MsgPrin = Self::MsgPrin,
+            Recv = Self::Recv,
+            RecvError = Self::RecvError
+        >;
     type DispInboundTypes: DispatchInboundTypes<
-        InMsg = Self::InMsg,
-        Wrapper = Self::Wrapper,
-        OutMsg = Self::OutMsg,
-        SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin,
-        AuthNMsg = Self::AuthNMsg,
-        MsgAuthError = Self::MsgAuthError,
-        MsgAuth = Self::MsgAuth
-    >;
+            InMsg = Self::InMsg,
+            Wrapper = Self::Wrapper,
+            OutMsg = Self::OutMsg,
+            SessionPrin = Self::SessionPrin,
+            MsgPrin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            MsgAuthError = Self::MsgAuthError,
+            MsgAuth = Self::MsgAuth
+        >;
     type SessionDispError: Debug + Display + ScopedError;
     type SessionDisp: SessionDispatch<
-        Self::SessionDispTypes,
-        SessionError = Self::SessionDispError
-    >;
+            Self::SessionDispTypes,
+            SessionError = Self::SessionDispError
+        >;
     type PullError: Debug + Display + ScopedError;
     type Chan: Clone
         + PullStream<Self::Wrapper, PullError = Self::PullError>
@@ -160,36 +160,36 @@ pub trait DispatchBusTypes<Ctx> {
     type ChansCreateError: Debug + Display;
     type ModeConfig: Clone + Default + Send;
     type SessionDispTypes: SessionDispatchTypes<
-        InMsg = Self::InMsg,
-        OutMsg = Self::OutMsg,
-        AuthNMsg = Self::AuthNMsg,
-        SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin
-    >;
+            InMsg = Self::InMsg,
+            OutMsg = Self::OutMsg,
+            AuthNMsg = Self::AuthNMsg,
+            SessionPrin = Self::SessionPrin,
+            MsgPrin = Self::MsgPrin
+        >;
     type SessionDisp: SessionDispatch<Self::SessionDispTypes>;
     type DispTypes: DispatcherTypes<
-        Ctx,
-        InMsg = Self::InMsg,
-        OutMsg = Self::OutMsg,
-        SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin,
-        AuthNMsg = Self::AuthNMsg,
-        MsgAuthConfig = Self::MsgAuthConfig,
-        EpochsConfig = Self::EpochsConfig,
-        SessionDisp = Self::SessionDisp
-    >;
+            Ctx,
+            InMsg = Self::InMsg,
+            OutMsg = Self::OutMsg,
+            SessionPrin = Self::SessionPrin,
+            MsgPrin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            MsgAuthConfig = Self::MsgAuthConfig,
+            EpochsConfig = Self::EpochsConfig,
+            SessionDisp = Self::SessionDisp
+        >;
     type DispThreadTypes: DispatchTypes<
-        Ctx,
-        InMsg = Self::InMsg,
-        OutMsg = Self::OutMsg,
-        SessionPrin = Self::SessionPrin,
-        MsgPrin = Self::MsgPrin,
-        AuthNMsg = Self::AuthNMsg,
-        Disp = Dispatcher<Self::DispTypes, Ctx>,
-        ChansConfig = Self::ChansConfig,
-        ChansCreateError = Self::ChansCreateError,
-        ModeConfig = Self::ModeConfig
-    >;
+            Ctx,
+            InMsg = Self::InMsg,
+            OutMsg = Self::OutMsg,
+            SessionPrin = Self::SessionPrin,
+            MsgPrin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            Disp = Dispatcher<Self::DispTypes, Ctx>,
+            ChansConfig = Self::ChansConfig,
+            ChansCreateError = Self::ChansCreateError,
+            ModeConfig = Self::ModeConfig
+        >;
 }
 
 /// Trait for application-level session dispatch.

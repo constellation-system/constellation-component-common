@@ -26,9 +26,9 @@ use std::fmt::Formatter;
 use std::iter::once;
 use std::marker::PhantomData;
 
-use constellation_common::codec::per::PERCodec;
 use constellation_common::codec::Decoder;
 use constellation_common::codec::Encoder;
+use constellation_common::codec::per::PERCodec;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
@@ -3175,16 +3175,8 @@ where
     }
 }
 
-impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec
-    > Create
+impl<RoundID, H, Seal, Payload, Effect, SealCodec, PayloadCodec, EffectCodec>
+    Create
     for XactCommittedRoundCodec<
         RoundID,
         H,
@@ -3238,16 +3230,8 @@ where
     }
 }
 
-impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec
-    > Encoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+impl<RoundID, H, Seal, Payload, Effect, SealCodec, PayloadCodec, EffectCodec>
+    Encoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
     for XactCommittedRoundCodec<
         RoundID,
         H,
@@ -3393,16 +3377,8 @@ where
     }
 }
 
-impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec
-    > Decoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
+impl<RoundID, H, Seal, Payload, Effect, SealCodec, PayloadCodec, EffectCodec>
+    Decoder<XactCommittedRound<RoundID, H::HashID, Seal, Payload, Effect>>
     for XactCommittedRoundCodec<
         RoundID,
         H,
@@ -4690,19 +4666,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    > Create
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Create
     for XactBatchCodec<
         RoundID,
         H,
@@ -4786,19 +4762,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    > Encoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Encoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
     for XactBatchCodec<
         RoundID,
         H,
@@ -4925,19 +4901,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    > Decoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Decoder<XactBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
     for XactBatchCodec<
         RoundID,
         H,
@@ -5061,19 +5037,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    >
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+>
     XactBatchHashCodec<
         RoundID,
         H,
@@ -5140,19 +5116,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    > Create
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Create
     for XactBatchHashCodec<
         RoundID,
         H,
@@ -5236,20 +5212,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    >
-    Encoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Encoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
     for XactBatchHashCodec<
         RoundID,
         H,
@@ -5392,20 +5367,19 @@ where
 }
 
 impl<
-        RoundID,
-        H,
-        Seal,
-        Payload,
-        Effect,
-        Res,
-        Err,
-        SealCodec,
-        PayloadCodec,
-        EffectCodec,
-        ResCodec,
-        ErrCodec
-    >
-    Decoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
+    RoundID,
+    H,
+    Seal,
+    Payload,
+    Effect,
+    Res,
+    Err,
+    SealCodec,
+    PayloadCodec,
+    EffectCodec,
+    ResCodec,
+    ErrCodec
+> Decoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
     for XactBatchHashCodec<
         RoundID,
         H,

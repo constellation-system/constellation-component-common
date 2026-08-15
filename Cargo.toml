@@ -20,16 +20,15 @@
 name = "constellation-component-common"
 description = "Common APIs, datatypes, and functionality for Constellation Components"
 repository = "https://github.com/constellation-system/constellation-component-common"
+edition = "2024"
 version = "0.0.0"
 authors = [ "Eric McCorkle <eric.mccorkle@jhuapl.edu>" ]
-rust-version = "1.83"
 license = "AGPL-3.0-only"
 keywords = ["networking", "distributed systems", "consensus"]
 categories = ["network-programming"]
 exclude = [
     ".gitignore"
 ]
-edition = "2018"
 
 [features]
 default = ["dtls", "gssapi", "log", "openssl", "socks5", "tls", "unix"]
@@ -70,4 +69,4 @@ asn1rs = { version = "0.3" }
 
 [dev-dependencies]
 env_logger = { version = "0.10" }
-serde_yaml = { version = "0.9" }
+yaml_serde = { version = "0.10" }

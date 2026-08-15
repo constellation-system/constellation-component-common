@@ -68,29 +68,34 @@ where
     type ChansConfig;
     type ChansCreateError: Debug + Display;
     type ThreadTypes: PollThreadTypes<
-        Ctx,
-        Addr = Self::Addr,
-        InMsg = Self::InMsg,
-        MsgPrin = Self::MsgPrin,
-        AuthNMsg = Self::AuthNMsg,
-        Recv = Self::Recv,
-        Msgs = Self::Msgs,
-        ChansConfig = Self::ChansConfig,
-        StreamConfig = StreamMulticasterConfig<
-            Self::SessionPrin,
-            Retry,
-            PartyConfig<ResolverConfig, Self::EpochsConfig, String, Self::Addr>
-        >,
-        StreamCreateError = StreamSelectorCreateError<
-            Self::ResolveCreateError,
-            Self::EpochsCreateError
-        >,
-        MsgAuthConfig = Self::MsgAuthConfig,
-        ModeConfig = Self::ModeConfig,
-        ModeCreateError = Self::ModeCreateError,
-        MsgAuthCreateError = Self::MsgAuthCreateError,
-        ChansCreateError = Self::ChansCreateError
-    >;
+            Ctx,
+            Addr = Self::Addr,
+            InMsg = Self::InMsg,
+            MsgPrin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            Recv = Self::Recv,
+            Msgs = Self::Msgs,
+            ChansConfig = Self::ChansConfig,
+            StreamConfig = StreamMulticasterConfig<
+                Self::SessionPrin,
+                Retry,
+                PartyConfig<
+                    ResolverConfig,
+                    Self::EpochsConfig,
+                    String,
+                    Self::Addr
+                >
+            >,
+            StreamCreateError = StreamSelectorCreateError<
+                Self::ResolveCreateError,
+                Self::EpochsCreateError
+            >,
+            MsgAuthConfig = Self::MsgAuthConfig,
+            ModeConfig = Self::ModeConfig,
+            ModeCreateError = Self::ModeCreateError,
+            MsgAuthCreateError = Self::MsgAuthCreateError,
+            ChansCreateError = Self::ChansCreateError
+        >;
 }
 
 pub struct MulticastBus<Types, Ctx>
@@ -121,7 +126,6 @@ where
     Types: 'static + MulticastBusTypes<Ctx>
 {
     pub fn create(
-        self_party: Option<Types::SessionPrin>,
         config: MulticastBusConfig<
             Types::ChansConfig,
             Types::EpochsConfig,
@@ -130,6 +134,7 @@ where
             Types::MsgAuthConfig,
             Types::Addr
         >,
+        self_party: Option<Types::SessionPrin>,
         ctx: Ctx,
         recv: Types::Recv,
         msgs: Types::Msgs
