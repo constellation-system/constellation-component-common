@@ -57,3 +57,5 @@ parties:
               unix-datagram: bus-example-server-datagram.sock
 
 msg-authn: null
+
+self: client

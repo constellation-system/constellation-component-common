@@ -70,7 +70,10 @@ where
         Epochs,
         String,
         MsgAuthN
-    >
+    >,
+    #[serde(rename = "self")]
+    #[serde(default)]
+    self_party: Option<Party>
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -106,6 +109,9 @@ where
     large_obj_msg_authn: MsgAuthN,
     #[serde(default)]
     hash: Hash,
+    #[serde(rename = "self")]
+    #[serde(default)]
+    self_party: Option<Party>
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -305,7 +311,7 @@ where
     #[inline]
     pub fn take(
         self
-    ) -> CompoundFarMulticastPollThreadConfig<
+    ) -> (CompoundFarMulticastPollThreadConfig<
         AuthN,
         Unix,
         UDP,
@@ -317,8 +323,9 @@ where
         Epochs,
         String,
         MsgAuthN
-    > {
-        self.thread
+    >,
+    Option<Party>) {
+        (self.thread, self.self_party)
     }
 }
 
@@ -354,9 +361,11 @@ where
         >,
         LargeObjProtoConfig<Enc, Dec, IDs>,
         MsgAuthN,
-        Hash
+        Hash,
+        Option<Party>
     ) {
-        (self.thread, self.large_obj, self.large_obj_msg_authn, self.hash)
+        (self.thread, self.large_obj, self.large_obj_msg_authn,
+         self.hash, self.self_party)
     }
 }
 

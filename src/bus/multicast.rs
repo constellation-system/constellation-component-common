@@ -29,8 +29,11 @@ use constellation_channels::far::types::CompoundFarChannelsDatagramMulticastPoll
 use constellation_channels::far::types::CompoundFarChannelsLargeObjMulticastPollTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_common::config::Create;
+use constellation_common::error::MutexPoison;
+use constellation_common::retry::Retry;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::multicast::MulticastStreamIdx;
 use constellation_streams::threads::poll::PollThread;
 use log::debug;
 use log::error;
@@ -60,7 +63,7 @@ where
 }
 
 #[derive(Debug)]
-pub enum MulticastLargeObjBusCreateError<Hash, Auth, Proto> {
+pub enum MulticastLargeObjBusCreateError<Hash, Auth, Proto, Parties> {
     Hash {
         err: Hash
     },
@@ -73,6 +76,9 @@ pub enum MulticastLargeObjBusCreateError<Hash, Auth, Proto> {
     Proto {
         err: Proto
     },
+    Parties {
+        err: Parties
+    }
 }
 
 impl<Types, Ctx> MulticastDatagramBus<Types, Ctx>
@@ -95,10 +101,10 @@ where
         recv: Types::Recv,
         msgs: Types::Msgs
     ) -> Result<Self, Error> {
-        info!(target: "unicast-datagram-bus",
-              "creating unicast datagram bus");
+        info!(target: "multicast-datagram-bus",
+              "creating multicast datagram bus");
 
-        let poll_config = config.take();
+        let (poll_config, self_party) = config.take();
         let poll_join = PollThread::<
             Ctx,
             CompoundFarChannelsDatagramMulticastPollTypes<
@@ -119,7 +125,7 @@ where
                 Ctx
             >
         >::start(
-            poll_config, None, ctx, recv, msgs
+            poll_config, self_party, ctx, recv, msgs
         )?;
 
         Ok(MulticastDatagramBus {
@@ -130,11 +136,11 @@ where
     }
 
     pub fn cleanup(self) {
-        debug!(target: "unicast-datagram-bus-cleanup",
+        debug!(target: "multicast-datagram-bus-cleanup",
                "joining poll thread");
 
         if self.poll_join.join().is_err() {
-            error!(target: "unicast-datagram-bus-cleanup",
+            error!(target: "multicast-datagram-bus-cleanup",
                    "error joining poll thread")
         }
     }
@@ -171,13 +177,15 @@ where
                 Types::EncoderCreateError,
                 Types::DecoderCreateError,
                 Types::IDsCreateError
-            >
+            >,
+            MutexPoison
         >
     > {
-        info!(target: "unicast-large-obj-bus",
-              "creating unicast large object bus");
+        info!(target: "multicast-large-obj-bus",
+              "creating multicast large object bus");
 
-        let (poll_config, large_obj_config, proto_auth_config, hash_config) =
+        let (poll_config, large_obj_config, proto_auth_config,
+             hash_config, self_party) =
             config.take();
         let hash = Types::Hash::create(hash_config)
             .map_err(|err| MulticastLargeObjBusCreateError::Hash {
@@ -187,11 +195,42 @@ where
             .map_err(|err| MulticastLargeObjBusCreateError::Auth {
                 err: err
             })?;
-        let large_obj =
+        let mut large_obj =
             LargeObjProto::create(large_obj_config, recv, msgs, msgauth, hash)
             .map_err(|err| MulticastLargeObjBusCreateError::Proto {
                 err: err
             })?;
+
+        // XXX this is a hacky and wrong way to set parties; it should
+        // be done in the manager thread.
+        let nparties = poll_config.stream()
+            .parties()
+            .iter()
+            .filter(|ent| self_party.as_ref()
+                    .is_none_or(|self_party| self_party != ent.party()))
+            .count();
+        let parties = poll_config
+            .stream()
+            .parties()
+            .iter()
+            .filter(|ent| self_party.as_ref()
+                    .is_none_or(|self_party| self_party != ent.party()))
+            .enumerate()
+            .map(|(i, ent)| {
+
+                debug!(target: "HERE",
+                       "creating party entry {} for {}",
+                       i, ent.party());
+
+                (MulticastStreamIdx::from(i), ent.party().clone())
+            });
+        let params = vec![Retry::default(); nparties];
+
+        large_obj.set_parties(params, parties)
+            .map_err(|err| MulticastLargeObjBusCreateError::Parties {
+                err: err
+            })?;
+
         let large_obj = Arc::new(Mutex::new(large_obj));
         let poll_join = PollThread::<
             Ctx,
@@ -210,7 +249,7 @@ where
                 Ctx
             >
         >::start(
-            poll_config, None, ctx, large_obj.clone(), large_obj
+            poll_config, self_party, ctx, large_obj.clone(), large_obj
         )
             .map_err(|err| MulticastLargeObjBusCreateError::IO {
                 err: err
@@ -224,19 +263,20 @@ where
     }
 
     pub fn cleanup(self) {
-        debug!(target: "unicast-large-obj-bus-cleanup",
+        debug!(target: "multicast-large-obj-bus-cleanup",
                "joining poll thread");
 
         if self.poll_join.join().is_err() {
-            error!(target: "unicast-large-obj-bus-cleanup",
+            error!(target: "multicast-large-obj-bus-cleanup",
                    "error joining poll thread")
         }
     }
 }
 
-impl<Hash, Auth, Proto> Display
-    for MulticastLargeObjBusCreateError<Hash, Auth, Proto>
+impl<Hash, Auth, Proto, Parties> Display
+    for MulticastLargeObjBusCreateError<Hash, Auth, Proto, Parties>
 where
+    Parties: Display,
     Proto: Display,
     Auth: Display,
     Hash: Display {
@@ -245,6 +285,7 @@ where
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
+            MulticastLargeObjBusCreateError::Parties { err } => err.fmt(f),
             MulticastLargeObjBusCreateError::Proto { err } => err.fmt(f),
             MulticastLargeObjBusCreateError::Auth { err } => err.fmt(f),
             MulticastLargeObjBusCreateError::Hash { err } => err.fmt(f),
