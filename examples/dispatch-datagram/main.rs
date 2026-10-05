@@ -16,7 +16,23 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-pub mod dispatch;
-pub mod multicast;
-pub mod types;
-pub mod unicast;
+use log::LevelFilter;
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: {} <config>", args[0]);
+
+        std::process::exit(1);
+    }
+
+    env_logger::builder()
+        .is_test(true)
+        .filter_level(LevelFilter::Trace)
+        .init();
+
+    let conf = std::fs::read_to_string(&args[1]).unwrap();
+
+//    run(&conf)
+}
