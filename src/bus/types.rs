@@ -39,18 +39,18 @@ use constellation_channels::far::compound::CompoundFlow;
 use constellation_channels::far::types::CompoundFarChannelsDatagramChan;
 use constellation_channels::far::types::CompoundFarChannelsLargeObjChan;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
-use constellation_common::config::Create;
-use constellation_common::config::CreateWithParam;
 use constellation_common::codec::Decoder;
 use constellation_common::codec::Encoder;
+use constellation_common::config::Create;
+use constellation_common::config::CreateWithParam;
 use constellation_common::error::CodecStreamError;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::HashAlgo;
 use constellation_common::hashid::HashID;
 use constellation_common::net::DatagramXfrmCreate;
 use constellation_common::net::PrivateMsgs;
-use constellation_common::net::SharedMsgs;
 use constellation_common::net::Session;
+use constellation_common::net::SharedMsgs;
 use constellation_common::unix::UnixSocketPath;
 use constellation_streams::addrs::AddrsCreate;
 use constellation_streams::codec::CodecBatchID;
@@ -68,6 +68,7 @@ use constellation_streams::stream::PullStream;
 use constellation_streams::stream::PushStreamAdd;
 use constellation_streams::stream::PushStreamPrivate;
 use constellation_streams::stream::RefCellStreamError;
+use constellation_streams::threads::dispatch::DispatchThreadCtx;
 use constellation_streams::threads::poll::MsgsWaker;
 use constellation_streams::threads::poll::PollThreadCtx;
 
@@ -82,17 +83,17 @@ where
     type MsgPrin: Clone + Display + Eq + Hash;
     type SessionPrin: Display + Send + Sync;
     type AuthNMsg: AuthNed<Self::MsgPrin>;
-    type SessionAuth: CreateWithParam<bool,
-                                      Config = Self::SessionAuthConfig>
-        + SessionAuthN<CompoundFlow<Self::Unix, Self::UDP>,
-                       Prin = Self::SessionPrin,
-                       AuthNSession = Self::AuthNSession,
-                       Param = (),
-                       NegotiateError = Self::SessionAuthNError>;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
     type SessionAuthConfig: Clone + Send;
     type SessionAuthNError: ScopedError;
-    type AuthNSession:
-        AuthNedMap<
+    type AuthNSession: AuthNedMap<
             Self::SessionPrin,
             CompoundFlow<Self::Unix, Self::UDP>,
             CompoundFarChannelsDatagramChan<
@@ -107,7 +108,8 @@ where
         > + Session<
             PeerAddr = CompoundFarChannelXfrmPeerAddr,
             LocalAddr = CompoundFarChannelAddr
-        > + Read + Write;
+        > + Read
+        + Write;
     type AuthNChan: Clone
         + AuthNed<Self::SessionPrin>
         + AuthNedDestruct<
@@ -120,8 +122,7 @@ where
                 Self::Encoder,
                 Self::Decoder
             >
-        >
-        + PushStreamAdd<
+        > + PushStreamAdd<
             Self::OutMsg,
             PollThreadCtx<
                 Self::SessionPrin,
@@ -135,14 +136,13 @@ where
                     Self::Encoder,
                     Self::Decoder
                 >,
-                Ctx,
+                Ctx
             >,
             BatchID = CodecBatchID,
             AddError = RefCellStreamError<
                 CodecStreamError<Self::EncodeError, std::io::Error>
             >
-        >
-        + PushStreamPrivate<
+        > + PushStreamPrivate<
             PollThreadCtx<
                 Self::SessionPrin,
                 CompoundFarChannels<
@@ -160,41 +160,45 @@ where
             StartBatchError = RefCellStreamError<Infallible>,
             CancelBatchError = RefCellStreamError<Infallible>,
             FinishBatchError = RefCellStreamError<Infallible>
-        >
-        + PullStream<Self::Wrapper>;
-    type MsgAuth: Create<
-            Config = Self::MsgAuthConfig,
-        > + MsgAuthN<
+        > + PullStream<Self::Wrapper>;
+    type MsgAuth: Create<Config = Self::MsgAuthConfig>
+        + MsgAuthN<
             Self::InMsg,
             Self::Wrapper,
             Prin = Self::MsgPrin,
             AuthNMsg = Self::AuthNMsg,
-            SessionPrin = Self::SessionPrin,
+            SessionPrin = Self::SessionPrin
         >;
     type MsgAuthConfig: Send;
-    type Encoder: Create<Config = Self::EncoderConfig,
-                     CreateError = Self::EncoderCreateError>
-        + Encoder<Self::OutMsg>;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg>;
     type EncoderConfig: Clone + Default + Send;
     type EncodeError: Debug + Display + ScopedError;
     type EncoderCreateError: Debug + Display + ScopedError;
-    type Decoder: Create<Config = Self::DecoderConfig,
-                     CreateError = Self::DecoderCreateError>
-        + Decoder<Self::Wrapper>;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>;
     type DecoderConfig: Clone + Default + Send;
     type DecoderCreateError: Debug + Display + ScopedError;
-    type Unix: DatagramXfrmCreate<Addr = UnixSocketPath,
-                                  CreateParam = Self::UnixConfig,
-                                  Error = Self::UnixError,
-                                  PeerAddr = UnixSocketPath,
-                                  LocalAddr = UnixSocketPath>;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
     type UnixConfig: Clone + Default + Send;
     type UnixError: Debug + Display + ScopedError;
-    type UDP: DatagramXfrmCreate<Addr = SocketAddr,
-                                 CreateParam = Self::UDPConfig,
-                                 Error = Self::UDPError,
-                                 PeerAddr = SocketAddr,
-                                 LocalAddr = SocketAddr>;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
     type UDPConfig: Clone + Default + Send;
     type UDPError: Debug + Display + ScopedError;
     type Epoch: Clone + Debug + Default + Display + Eq + Hash;
@@ -203,25 +207,25 @@ where
     type EpochsConfig: Default + Send;
     type Origin: Clone + Debug + Display + Eq + Hash;
     type Resolver: AddrsCreate<
-        PollThreadCtx<
-            Self::SessionPrin,
-            CompoundFarChannels<
-                Self::SessionAuth,
-                Self::AuthNChan,
-                Self::Unix,
-                Self::UDP,
-                Self::OutMsg,
-                Self::Wrapper,
-                Self::Encoder,
-                Self::Decoder
+            PollThreadCtx<
+                Self::SessionPrin,
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    Self::OutMsg,
+                    Self::Wrapper,
+                    Self::Encoder,
+                    Self::Decoder
+                >,
+                Ctx
             >,
-            Ctx
-        >,
-        Addr = CompoundFarChannelXfrmPeerAddr,
-        Origin = Self::Origin,
-        OriginConfig = CompoundFarEndpoint,
-        Config = Self::ResolverConfig,
-    >;
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: PrivateMsgs<Self::OutMsg> + MsgsWaker + Send;
@@ -236,64 +240,56 @@ where
     type MsgPrin: Clone + Debug + Display + Eq + Hash;
     type SessionPrin: Clone + Debug + Display + Eq + Hash + Send + Sync;
     type AuthNMsg: AuthNed<Self::MsgPrin>;
-    type Hash: Clone + Default
-        + Create<Config = Self::HashConfig,
-                 CreateError = Self::HashCreateError>
-        + HashAlgo<HashID = Self::HashID> + Send;
+    type Hash: Clone
+        + Default
+        + Create<Config = Self::HashConfig, CreateError = Self::HashCreateError>
+        + HashAlgo<HashID = Self::HashID>
+        + Send;
     type HashID: Clone + Debug + Display + Eq + Hash + HashID + Send;
     type HashConfig: Default;
     type HashCreateError: Debug + Display;
-    type IDs: Create<Config = Self::IDsConfig,
-                     CreateError = Self::IDsCreateError>
-        + Iterator<Item = LargeObjID> + Send;
+    type IDs: Create<Config = Self::IDsConfig, CreateError = Self::IDsCreateError>
+        + Iterator<Item = LargeObjID>
+        + Send;
     type IDsConfig: Default + Send;
     type IDsCreateError: Debug + Display;
     type LargeObjWrapper;
     type LargeObjAuthNMsg: AuthNed<Self::MsgPrin>;
-    type LargeObjMsgAuth: Create<
-            Config = Self::LargeObjMsgAuthConfig,
-        > + MsgAuthN<
+    type LargeObjMsgAuth: Create<Config = Self::LargeObjMsgAuthConfig>
+        + MsgAuthN<
             LargeObjMsg<Self::HashID>,
             Self::LargeObjWrapper,
             Prin = Self::SessionPrin,
             AuthNMsg = Self::LargeObjAuthNMsg,
-            SessionPrin = Self::SessionPrin,
+            SessionPrin = Self::SessionPrin
         >;
     type LargeObjMsgAuthConfig: Send;
-    type SessionAuth: CreateWithParam<bool,
-                                      Config = Self::SessionAuthConfig>
-        + SessionAuthN<CompoundFlow<Self::Unix, Self::UDP>,
-                       Prin = Self::SessionPrin,
-                       AuthNSession = Self::AuthNSession,
-                       Param = (),
-                       NegotiateError = Self::SessionAuthNError>;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
     type SessionAuthConfig: Clone + Send;
     type SessionAuthNError: ScopedError;
-    type AuthNSession:
-        AuthNedMap<
+    type AuthNSession: AuthNedMap<
             Self::SessionPrin,
             CompoundFlow<Self::Unix, Self::UDP>,
-            CompoundFarChannelsLargeObjChan<
-                Self::Hash,
-                Self::Unix,
-                Self::UDP,
-            >,
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>,
             Self::AuthNChan
         > + Session<
             PeerAddr = CompoundFarChannelXfrmPeerAddr,
             LocalAddr = CompoundFarChannelAddr
-        > + Read + Write;
+        > + Read
+        + Write;
     type AuthNChan: Clone
         + AuthNed<Self::SessionPrin>
         + AuthNedDestruct<
             Self::SessionPrin,
-            CompoundFarChannelsLargeObjChan<
-                Self::Hash,
-                Self::Unix,
-                Self::UDP,
-            >,
-        >
-        + PushStreamAdd<
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>
+        > + PushStreamAdd<
             LargeObjMsg<Self::HashID>,
             PollThreadCtx<
                 Self::SessionPrin,
@@ -307,14 +303,13 @@ where
                     LargeObjMsgCodec<Self::Hash>,
                     LargeObjMsgCodec<Self::Hash>
                 >,
-                Ctx,
+                Ctx
             >,
             BatchID = CodecBatchID,
             AddError = RefCellStreamError<
                 CodecStreamError<LargeObjMsgEncodeError, std::io::Error>
             >
-        >
-        + PushStreamPrivate<
+        > + PushStreamPrivate<
             PollThreadCtx<
                 Self::SessionPrin,
                 CompoundFarChannels<
@@ -359,9 +354,8 @@ where
                 DatagramCodecFragError<
                     CodecStreamError<LargeObjMsgEncodeError, Error>
                 >
-            >,
-        >
-        + PullStream<Self::LargeObjWrapper>;
+            >
+        > + PullStream<Self::LargeObjWrapper>;
     type MsgAuth: Create<
             Config = Self::MsgAuthConfig,
             CreateError = Self::MsgAuthCreateError
@@ -376,30 +370,37 @@ where
     type MsgAuthError: Debug + Display + ScopedError;
     type MsgAuthConfig: Send;
     type MsgAuthCreateError: Debug + Display;
-    type Encoder: Create<Config = Self::EncoderConfig,
-                         CreateError = Self::EncoderCreateError>
-        + Encoder<Self::OutMsg,
-                  EncodeError = Self::EncodeError> + Send;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
+        + Send;
     type EncoderConfig: Clone + Default + Send;
     type EncodeError: Debug + Display + ScopedError;
     type EncoderCreateError: Debug + Display + ScopedError;
-    type Decoder: Create<Config = Self::DecoderConfig,
-                         CreateError = Self::DecoderCreateError>
-        + Decoder<Self::Wrapper> + Send;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>
+        + Send;
     type DecoderConfig: Clone + Default + Send;
     type DecoderCreateError: Debug + Display + ScopedError;
-    type Unix: DatagramXfrmCreate<Addr = UnixSocketPath,
-                                  CreateParam = Self::UnixConfig,
-                                  Error = Self::UnixError,
-                                  PeerAddr = UnixSocketPath,
-                                  LocalAddr = UnixSocketPath>;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
     type UnixConfig: Clone + Default + Send;
     type UnixError: Debug + Display + ScopedError;
-    type UDP: DatagramXfrmCreate<Addr = SocketAddr,
-                                 CreateParam = Self::UDPConfig,
-                                 Error = Self::UDPError,
-                                 PeerAddr = SocketAddr,
-                                 LocalAddr = SocketAddr>;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
     type UDPConfig: Clone + Default + Send;
     type UDPError: Debug + Display + ScopedError;
     type Epoch: Clone + Debug + Default + Display + Eq + Hash;
@@ -408,49 +409,49 @@ where
     type EpochsConfig: Default + Send;
     type Origin: Clone + Debug + Display + Eq + Hash;
     type Resolver: AddrsCreate<
-        PollThreadCtx<
-            Self::SessionPrin,
-            CompoundFarChannels<
-                Self::SessionAuth,
-                Self::AuthNChan,
-                Self::Unix,
-                Self::UDP,
-                LargeObjMsg<Self::HashID>,
-                LargeObjMsg<Self::HashID>,
-                LargeObjMsgCodec<Self::Hash>,
-                LargeObjMsgCodec<Self::Hash>
+            PollThreadCtx<
+                Self::SessionPrin,
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
             >,
-            Ctx
-        >,
-        Addr = CompoundFarChannelXfrmPeerAddr,
-        Origin = Self::Origin,
-        OriginConfig = CompoundFarEndpoint,
-        Config = Self::ResolverConfig,
-    >;
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsWaker + Send;
     type LargeObjTypes: LargeObjProtoTypes<
-        Self::InMsg,
-        Self::OutMsg,
-        Prin = Self::MsgPrin,
-        SessionPrin = Self::SessionPrin,
-        IDsConfig = Self::IDsConfig,
-        IDs = Self::IDs,
-        HashID = Self::HashID,
-        Hash = Self::Hash,
-        Wrapper = Self::Wrapper,
-        DecoderConfig = Self::DecoderConfig,
-        Decoder = Self::Decoder,
-        EncoderConfig = Self::EncoderConfig,
-        Encoder = Self::Encoder,
-        EncodeError = Self::EncodeError,
-        Msgs = Self::Msgs,
-        Recv = Self::Recv,
-        AuthNMsg = Self::AuthNMsg,
-        MsgAuthN = Self::MsgAuth,
-        AuthNError = Self::MsgAuthError
-    >;
+            Self::InMsg,
+            Self::OutMsg,
+            Prin = Self::MsgPrin,
+            SessionPrin = Self::SessionPrin,
+            IDsConfig = Self::IDsConfig,
+            IDs = Self::IDs,
+            HashID = Self::HashID,
+            Hash = Self::Hash,
+            Wrapper = Self::Wrapper,
+            DecoderConfig = Self::DecoderConfig,
+            Decoder = Self::Decoder,
+            EncoderConfig = Self::EncoderConfig,
+            Encoder = Self::Encoder,
+            EncodeError = Self::EncodeError,
+            Msgs = Self::Msgs,
+            Recv = Self::Recv,
+            AuthNMsg = Self::AuthNMsg,
+            MsgAuthN = Self::MsgAuth,
+            AuthNError = Self::MsgAuthError
+        >;
 }
 
 pub trait MulticastDatagramBusTypes<Ctx>
@@ -462,17 +463,17 @@ where
     type MsgPrin: Clone + Display + Eq + Hash;
     type SessionPrin: Display + Send + Sync;
     type AuthNMsg: AuthNed<Self::MsgPrin>;
-    type SessionAuth: CreateWithParam<bool,
-                                      Config = Self::SessionAuthConfig>
-        + SessionAuthN<CompoundFlow<Self::Unix, Self::UDP>,
-                       Prin = Self::SessionPrin,
-                       AuthNSession = Self::AuthNSession,
-                       Param = (),
-                       NegotiateError = Self::SessionAuthNError>;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
     type SessionAuthConfig: Clone + Send;
     type SessionAuthNError: ScopedError;
-    type AuthNSession:
-        AuthNedMap<
+    type AuthNSession: AuthNedMap<
             Self::SessionPrin,
             CompoundFlow<Self::Unix, Self::UDP>,
             CompoundFarChannelsDatagramChan<
@@ -487,7 +488,8 @@ where
         > + Session<
             PeerAddr = CompoundFarChannelXfrmPeerAddr,
             LocalAddr = CompoundFarChannelAddr
-        > + Read + Write;
+        > + Read
+        + Write;
     type AuthNChan: Clone
         + AuthNed<Self::SessionPrin>
         + AuthNedDestruct<
@@ -500,8 +502,7 @@ where
                 Self::Encoder,
                 Self::Decoder
             >
-        >
-        + PushStreamAdd<
+        > + PushStreamAdd<
             Self::OutMsg,
             PollThreadCtx<
                 Self::SessionPrin,
@@ -515,14 +516,13 @@ where
                     Self::Encoder,
                     Self::Decoder
                 >,
-                Ctx,
+                Ctx
             >,
             BatchID = CodecBatchID,
             AddError = RefCellStreamError<
                 CodecStreamError<Self::EncodeError, std::io::Error>
             >
-        >
-        + PushStreamPrivate<
+        > + PushStreamPrivate<
             PollThreadCtx<
                 Self::SessionPrin,
                 CompoundFarChannels<
@@ -542,41 +542,45 @@ where
             StartBatchError = RefCellStreamError<Infallible>,
             CancelBatchError = RefCellStreamError<Infallible>,
             FinishBatchError = RefCellStreamError<Infallible>
-        >
-        + PullStream<Self::Wrapper>;
-    type MsgAuth: Create<
-            Config = Self::MsgAuthConfig,
-        > + MsgAuthN<
+        > + PullStream<Self::Wrapper>;
+    type MsgAuth: Create<Config = Self::MsgAuthConfig>
+        + MsgAuthN<
             Self::InMsg,
             Self::Wrapper,
             Prin = Self::MsgPrin,
             AuthNMsg = Self::AuthNMsg,
-            SessionPrin = Self::SessionPrin,
+            SessionPrin = Self::SessionPrin
         >;
     type MsgAuthConfig: Send;
-    type Encoder: Create<Config = Self::EncoderConfig,
-                     CreateError = Self::EncoderCreateError>
-        + Encoder<Self::OutMsg>;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg>;
     type EncoderConfig: Clone + Default + Send;
     type EncodeError: Debug + Display + ScopedError;
     type EncoderCreateError: Debug + Display + ScopedError;
-    type Decoder: Create<Config = Self::DecoderConfig,
-                     CreateError = Self::DecoderCreateError>
-        + Decoder<Self::Wrapper>;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>;
     type DecoderConfig: Clone + Default + Send;
     type DecoderCreateError: Debug + Display + ScopedError;
-    type Unix: DatagramXfrmCreate<Addr = UnixSocketPath,
-                                  CreateParam = Self::UnixConfig,
-                                  Error = Self::UnixError,
-                                  PeerAddr = UnixSocketPath,
-                                  LocalAddr = UnixSocketPath>;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
     type UnixConfig: Clone + Default + Send;
     type UnixError: Debug + Display + ScopedError;
-    type UDP: DatagramXfrmCreate<Addr = SocketAddr,
-                                 CreateParam = Self::UDPConfig,
-                                 Error = Self::UDPError,
-                                 PeerAddr = SocketAddr,
-                                 LocalAddr = SocketAddr>;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
     type UDPConfig: Clone + Default + Send;
     type UDPError: Debug + Display + ScopedError;
     type Epoch: Clone + Debug + Default + Display + Eq + Hash;
@@ -585,25 +589,25 @@ where
     type EpochsConfig: Default + Send;
     type Origin: Clone + Debug + Display + Eq + Hash;
     type Resolver: AddrsCreate<
-        PollThreadCtx<
-            Self::SessionPrin,
-            CompoundFarChannels<
-                Self::SessionAuth,
-                Self::AuthNChan,
-                Self::Unix,
-                Self::UDP,
-                Self::OutMsg,
-                Self::Wrapper,
-                Self::Encoder,
-                Self::Decoder
+            PollThreadCtx<
+                Self::SessionPrin,
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    Self::OutMsg,
+                    Self::Wrapper,
+                    Self::Encoder,
+                    Self::Decoder
+                >,
+                Ctx
             >,
-            Ctx
-        >,
-        Addr = CompoundFarChannelXfrmPeerAddr,
-        Origin = Self::Origin,
-        OriginConfig = CompoundFarEndpoint,
-        Config = Self::ResolverConfig,
-    >;
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: SharedMsgs<MulticastStreamIdx, Self::OutMsg> + MsgsWaker + Send;
@@ -618,64 +622,56 @@ where
     type MsgPrin: Clone + Debug + Display + Eq + Hash;
     type SessionPrin: Clone + Debug + Display + Eq + Hash + Send + Sync;
     type AuthNMsg: AuthNed<Self::MsgPrin>;
-    type Hash: Clone + Default
-        + Create<Config = Self::HashConfig,
-                 CreateError = Self::HashCreateError>
-        + HashAlgo<HashID = Self::HashID> + Send;
+    type Hash: Clone
+        + Default
+        + Create<Config = Self::HashConfig, CreateError = Self::HashCreateError>
+        + HashAlgo<HashID = Self::HashID>
+        + Send;
     type HashID: Clone + Debug + Display + Eq + Hash + HashID + Send;
     type HashConfig: Default;
     type HashCreateError: Debug + Display;
-    type IDs: Create<Config = Self::IDsConfig,
-                     CreateError = Self::IDsCreateError>
-        + Iterator<Item = LargeObjID> + Send;
+    type IDs: Create<Config = Self::IDsConfig, CreateError = Self::IDsCreateError>
+        + Iterator<Item = LargeObjID>
+        + Send;
     type IDsConfig: Default + Send;
     type IDsCreateError: Debug + Display;
     type LargeObjWrapper;
     type LargeObjAuthNMsg: AuthNed<Self::MsgPrin>;
-    type LargeObjMsgAuth: Create<
-            Config = Self::LargeObjMsgAuthConfig,
-        > + MsgAuthN<
+    type LargeObjMsgAuth: Create<Config = Self::LargeObjMsgAuthConfig>
+        + MsgAuthN<
             LargeObjMsg<Self::HashID>,
             Self::LargeObjWrapper,
             Prin = Self::SessionPrin,
             AuthNMsg = Self::LargeObjAuthNMsg,
-            SessionPrin = Self::SessionPrin,
+            SessionPrin = Self::SessionPrin
         >;
     type LargeObjMsgAuthConfig: Send;
-    type SessionAuth: CreateWithParam<bool,
-                                      Config = Self::SessionAuthConfig>
-        + SessionAuthN<CompoundFlow<Self::Unix, Self::UDP>,
-                       Prin = Self::SessionPrin,
-                       AuthNSession = Self::AuthNSession,
-                       Param = (),
-                       NegotiateError = Self::SessionAuthNError>;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
     type SessionAuthConfig: Clone + Send;
     type SessionAuthNError: ScopedError;
-    type AuthNSession:
-        AuthNedMap<
+    type AuthNSession: AuthNedMap<
             Self::SessionPrin,
             CompoundFlow<Self::Unix, Self::UDP>,
-            CompoundFarChannelsLargeObjChan<
-                Self::Hash,
-                Self::Unix,
-                Self::UDP,
-            >,
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>,
             Self::AuthNChan
         > + Session<
             PeerAddr = CompoundFarChannelXfrmPeerAddr,
             LocalAddr = CompoundFarChannelAddr
-        > + Read + Write;
+        > + Read
+        + Write;
     type AuthNChan: Clone
         + AuthNed<Self::SessionPrin>
         + AuthNedDestruct<
             Self::SessionPrin,
-            CompoundFarChannelsLargeObjChan<
-                Self::Hash,
-                Self::Unix,
-                Self::UDP,
-            >,
-        >
-        + PushStreamAdd<
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>
+        > + PushStreamAdd<
             LargeObjMsg<Self::HashID>,
             PollThreadCtx<
                 Self::SessionPrin,
@@ -689,14 +685,13 @@ where
                     LargeObjMsgCodec<Self::Hash>,
                     LargeObjMsgCodec<Self::Hash>
                 >,
-                Ctx,
+                Ctx
             >,
             BatchID = CodecBatchID,
             AddError = RefCellStreamError<
                 CodecStreamError<LargeObjMsgEncodeError, std::io::Error>
             >
-        >
-        + PushStreamPrivate<
+        > + PushStreamPrivate<
             PollThreadCtx<
                 Self::SessionPrin,
                 CompoundFarChannels<
@@ -743,9 +738,8 @@ where
                 DatagramCodecFragError<
                     CodecStreamError<LargeObjMsgEncodeError, Error>
                 >
-            >,
-        >
-        + PullStream<Self::LargeObjWrapper>;
+            >
+        > + PullStream<Self::LargeObjWrapper>;
     type MsgAuth: Create<
             Config = Self::MsgAuthConfig,
             CreateError = Self::MsgAuthCreateError
@@ -760,30 +754,37 @@ where
     type MsgAuthError: Debug + Display + ScopedError;
     type MsgAuthConfig: Send;
     type MsgAuthCreateError: Debug + Display;
-    type Encoder: Create<Config = Self::EncoderConfig,
-                         CreateError = Self::EncoderCreateError>
-        + Encoder<Self::OutMsg,
-                  EncodeError = Self::EncodeError> + Send;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
+        + Send;
     type EncoderConfig: Clone + Default + Send;
     type EncodeError: Debug + Display + ScopedError;
     type EncoderCreateError: Debug + Display + ScopedError;
-    type Decoder: Create<Config = Self::DecoderConfig,
-                         CreateError = Self::DecoderCreateError>
-        + Decoder<Self::Wrapper> + Send;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>
+        + Send;
     type DecoderConfig: Clone + Default + Send;
     type DecoderCreateError: Debug + Display + ScopedError;
-    type Unix: DatagramXfrmCreate<Addr = UnixSocketPath,
-                                  CreateParam = Self::UnixConfig,
-                                  Error = Self::UnixError,
-                                  PeerAddr = UnixSocketPath,
-                                  LocalAddr = UnixSocketPath>;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
     type UnixConfig: Clone + Default + Send;
     type UnixError: Debug + Display + ScopedError;
-    type UDP: DatagramXfrmCreate<Addr = SocketAddr,
-                                 CreateParam = Self::UDPConfig,
-                                 Error = Self::UDPError,
-                                 PeerAddr = SocketAddr,
-                                 LocalAddr = SocketAddr>;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
     type UDPConfig: Clone + Default + Send;
     type UDPError: Debug + Display + ScopedError;
     type Epoch: Clone + Debug + Default + Display + Eq + Hash;
@@ -792,47 +793,433 @@ where
     type EpochsConfig: Default + Send;
     type Origin: Clone + Debug + Display + Eq + Hash + Send;
     type Resolver: AddrsCreate<
-        PollThreadCtx<
-            Self::SessionPrin,
-            CompoundFarChannels<
-                Self::SessionAuth,
-                Self::AuthNChan,
-                Self::Unix,
-                Self::UDP,
-                LargeObjMsg<Self::HashID>,
-                LargeObjMsg<Self::HashID>,
-                LargeObjMsgCodec<Self::Hash>,
-                LargeObjMsgCodec<Self::Hash>
+            PollThreadCtx<
+                Self::SessionPrin,
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
             >,
-            Ctx
-        >,
-        Addr = CompoundFarChannelXfrmPeerAddr,
-        Origin = Self::Origin,
-        OriginConfig = CompoundFarEndpoint,
-        Config = Self::ResolverConfig,
-    >;
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsWaker + Send;
     type LargeObjTypes: LargeObjProtoTypes<
-        Self::InMsg,
-        Self::OutMsg,
-        Prin = Self::MsgPrin,
-        SessionPrin = Self::SessionPrin,
-        IDsConfig = Self::IDsConfig,
-        IDs = Self::IDs,
-        HashID = Self::HashID,
-        Hash = Self::Hash,
-        Wrapper = Self::Wrapper,
-        DecoderConfig = Self::DecoderConfig,
-        Decoder = Self::Decoder,
-        EncoderConfig = Self::EncoderConfig,
-        Encoder = Self::Encoder,
-        EncodeError = Self::EncodeError,
-        Msgs = Self::Msgs,
-        Recv = Self::Recv,
-        AuthNMsg = Self::AuthNMsg,
-        MsgAuthN = Self::MsgAuth,
-        AuthNError = Self::MsgAuthError
-    > + Send;
+            Self::InMsg,
+            Self::OutMsg,
+            Prin = Self::MsgPrin,
+            SessionPrin = Self::SessionPrin,
+            IDsConfig = Self::IDsConfig,
+            IDs = Self::IDs,
+            HashID = Self::HashID,
+            Hash = Self::Hash,
+            Wrapper = Self::Wrapper,
+            DecoderConfig = Self::DecoderConfig,
+            Decoder = Self::Decoder,
+            EncoderConfig = Self::EncoderConfig,
+            Encoder = Self::Encoder,
+            EncodeError = Self::EncodeError,
+            Msgs = Self::Msgs,
+            Recv = Self::Recv,
+            AuthNMsg = Self::AuthNMsg,
+            MsgAuthN = Self::MsgAuth,
+            AuthNError = Self::MsgAuthError
+        > + Send;
+}
+
+pub trait SessionDispatchTypes {
+    type InMsg: Send;
+    type OutMsg: Clone + Send;
+    type MsgPrin: Clone + Display + Eq + Hash;
+    type SessionPrin: Display + Send + Sync;
+    type AuthNMsg: AuthNed<Self::MsgPrin>;
+    type Msgs: PrivateMsgs<Self::OutMsg> + Send;
+    type RecvError: Debug + Display + ScopedError;
+    type Recv: 'static
+        + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg, RecvError = Self::RecvError>
+        + Send;
+}
+
+pub trait DispatchDatagramBusTypes<Ctx>: SessionDispatchTypes
+where
+    Ctx: 'static + NSNameCachesCtx + Send {
+    type Wrapper;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
+    type SessionAuthConfig: Clone + Send;
+    type SessionAuthNError: ScopedError;
+    type AuthNSession: AuthNedMap<
+            Self::SessionPrin,
+            CompoundFlow<Self::Unix, Self::UDP>,
+            CompoundFarChannelsDatagramChan<
+                Self::Wrapper,
+                Self::OutMsg,
+                Self::Unix,
+                Self::UDP,
+                Self::Encoder,
+                Self::Decoder
+            >,
+            Self::AuthNChan
+        > + Session<
+            PeerAddr = CompoundFarChannelXfrmPeerAddr,
+            LocalAddr = CompoundFarChannelAddr
+        > + Read
+        + Write;
+    type AuthNChan: Clone
+        + AuthNed<Self::SessionPrin>
+        + AuthNedDestruct<
+            Self::SessionPrin,
+            CompoundFarChannelsDatagramChan<
+                Self::Wrapper,
+                Self::OutMsg,
+                Self::Unix,
+                Self::UDP,
+                Self::Encoder,
+                Self::Decoder
+            >
+        > + PushStreamAdd<
+            Self::OutMsg,
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    Self::OutMsg,
+                    Self::Wrapper,
+                    Self::Encoder,
+                    Self::Decoder
+                >,
+                Ctx
+            >,
+            BatchID = CodecBatchID,
+            AddError = RefCellStreamError<
+                CodecStreamError<Self::EncodeError, std::io::Error>
+            >
+        > + PushStreamPrivate<
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    Self::OutMsg,
+                    Self::Wrapper,
+                    Self::Encoder,
+                    Self::Decoder
+                >,
+                Ctx
+            >,
+            StartBatchError = RefCellStreamError<Infallible>,
+            CancelBatchError = RefCellStreamError<Infallible>,
+            FinishBatchError = RefCellStreamError<Infallible>
+        > + PullStream<Self::Wrapper>;
+    type MsgAuth: Clone
+        + Create<
+            Config = Self::MsgAuthConfig,
+            CreateError = Self::MsgAuthCreateError
+        > + MsgAuthN<
+            Self::InMsg,
+            Self::Wrapper,
+            Prin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            SessionPrin = Self::SessionPrin
+        >;
+    type MsgAuthConfig: Clone + Send;
+    type MsgAuthCreateError: Debug + Display + ScopedError;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg>;
+    type EncoderConfig: Clone + Default + Send;
+    type EncodeError: Debug + Display + ScopedError;
+    type EncoderCreateError: Debug + Display + ScopedError;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>;
+    type DecoderConfig: Clone + Default + Send;
+    type DecoderCreateError: Debug + Display + ScopedError;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
+    type UnixConfig: Clone + Default + Send;
+    type UnixError: Debug + Display + ScopedError;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
+    type UDPConfig: Clone + Default + Send;
+    type UDPError: Debug + Display + ScopedError;
+    type Epoch: Clone + Debug + Default + Display + Eq + Hash;
+    type Epochs: Create<
+            Config = Self::EpochsConfig,
+            CreateError = Self::EpochsCreateError
+        > + Iterator<Item = Self::Epoch>;
+    type EpochsConfig: Clone + Default + Send;
+    type EpochsCreateError: Debug + Display + ScopedError;
+    type Origin: Clone + Debug + Display + Eq + Hash;
+    type Resolver: AddrsCreate<
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    Self::OutMsg,
+                    Self::Wrapper,
+                    Self::Encoder,
+                    Self::Decoder
+                >,
+                Ctx
+            >,
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
+    type ResolverConfig: Clone + Default + Send;
+}
+
+pub trait DispatchLargeObjBusTypes<Ctx>: SessionDispatchTypes
+where
+    Ctx: 'static + NSNameCachesCtx + Send {
+    type Wrapper;
+    type Hash: Clone
+        + Default
+        + Create<Config = Self::HashConfig, CreateError = Self::HashCreateError>
+        + HashAlgo<HashID = Self::HashID>
+        + Send;
+    type HashID: Clone + Debug + Display + Eq + Hash + HashID + Send;
+    type HashConfig: Clone + Default + Send;
+    type HashCreateError: Debug + Display + ScopedError;
+    type IDs: Create<Config = Self::IDsConfig, CreateError = Self::IDsCreateError>
+        + Iterator<Item = LargeObjID>
+        + Send;
+    type IDsConfig: Clone + Default + Send;
+    type IDsCreateError: Debug + Display + ScopedError;
+    type LargeObjWrapper;
+    type LargeObjAuthNMsg: AuthNed<Self::MsgPrin>;
+    type LargeObjMsgAuth: Create<
+            Config = Self::LargeObjMsgAuthConfig,
+            CreateError = Self::LargeObjMsgAuthCreateError
+        > + MsgAuthN<
+            LargeObjMsg<Self::HashID>,
+            Self::LargeObjWrapper,
+            Prin = Self::SessionPrin,
+            AuthNMsg = Self::LargeObjAuthNMsg,
+            SessionPrin = Self::SessionPrin
+        >;
+    type LargeObjMsgAuthConfig: Clone + Send;
+    type LargeObjMsgAuthCreateError: Debug + Display + ScopedError;
+    type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
+        + SessionAuthN<
+            CompoundFlow<Self::Unix, Self::UDP>,
+            Prin = Self::SessionPrin,
+            AuthNSession = Self::AuthNSession,
+            Param = (),
+            NegotiateError = Self::SessionAuthNError
+        >;
+    type SessionAuthConfig: Clone + Send;
+    type SessionAuthNError: ScopedError;
+    type AuthNSession: AuthNedMap<
+            Self::SessionPrin,
+            CompoundFlow<Self::Unix, Self::UDP>,
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>,
+            Self::AuthNChan
+        > + Session<
+            PeerAddr = CompoundFarChannelXfrmPeerAddr,
+            LocalAddr = CompoundFarChannelAddr
+        > + Read
+        + Write;
+    type AuthNChan: Clone
+        + AuthNed<Self::SessionPrin>
+        + AuthNedDestruct<
+            Self::SessionPrin,
+            CompoundFarChannelsLargeObjChan<Self::Hash, Self::Unix, Self::UDP>
+        > + PushStreamAdd<
+            LargeObjMsg<Self::HashID>,
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
+            >,
+            BatchID = CodecBatchID,
+            AddError = RefCellStreamError<
+                CodecStreamError<LargeObjMsgEncodeError, std::io::Error>
+            >
+        > + PushStreamPrivate<
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
+            >,
+            BatchID = CodecBatchID,
+            StartBatchError = RefCellStreamError<Infallible>,
+            CancelBatchError = RefCellStreamError<Infallible>,
+            FinishBatchError = RefCellStreamError<Infallible>
+        > + LargeObjOfferStream<
+            Self::HashID,
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
+            >,
+            Frags = OutboundFrags,
+            PushFragError = RefCellStreamError<
+                DatagramCodecFragError<
+                    CodecStreamError<LargeObjMsgEncodeError, Error>
+                >
+            >,
+            PushOfferError = RefCellStreamError<
+                DatagramCodecFragError<
+                    CodecStreamError<LargeObjMsgEncodeError, Error>
+                >
+            >
+        > + PullStream<Self::LargeObjWrapper>;
+    type MsgAuth: Clone
+        + Create<
+            Config = Self::MsgAuthConfig,
+            CreateError = Self::MsgAuthCreateError
+        > + MsgAuthN<
+            Self::InMsg,
+            Self::Wrapper,
+            Prin = Self::MsgPrin,
+            AuthNMsg = Self::AuthNMsg,
+            SessionPrin = Self::SessionPrin,
+            Error = Self::MsgAuthError
+        > + Send;
+    type MsgAuthError: Debug + Display + ScopedError;
+    type MsgAuthConfig: Clone + Send;
+    type MsgAuthCreateError: Debug + Display + ScopedError;
+    type Encoder: Create<
+            Config = Self::EncoderConfig,
+            CreateError = Self::EncoderCreateError
+        > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
+        + Send;
+    type EncoderConfig: Clone + Default + Send;
+    type EncodeError: Debug + Display + ScopedError;
+    type EncoderCreateError: Debug + Display + ScopedError;
+    type Decoder: Create<
+            Config = Self::DecoderConfig,
+            CreateError = Self::DecoderCreateError
+        > + Decoder<Self::Wrapper>
+        + Send;
+    type DecoderConfig: Clone + Default + Send;
+    type DecoderCreateError: Debug + Display + ScopedError;
+    type Unix: DatagramXfrmCreate<
+            Addr = UnixSocketPath,
+            CreateParam = Self::UnixConfig,
+            Error = Self::UnixError,
+            PeerAddr = UnixSocketPath,
+            LocalAddr = UnixSocketPath
+        >;
+    type UnixConfig: Clone + Default + Send;
+    type UnixError: Debug + Display + ScopedError;
+    type UDP: DatagramXfrmCreate<
+            Addr = SocketAddr,
+            CreateParam = Self::UDPConfig,
+            Error = Self::UDPError,
+            PeerAddr = SocketAddr,
+            LocalAddr = SocketAddr
+        >;
+    type UDPConfig: Clone + Default + Send;
+    type UDPError: Debug + Display + ScopedError;
+    type Epoch: Clone + Debug + Default + Display + Eq + Hash;
+    type Epochs: Create<
+            Config = Self::EpochsConfig,
+            CreateError = Self::EpochsCreateError
+        > + Iterator<Item = Self::Epoch>;
+    type EpochsConfig: Clone + Default + Send;
+    type EpochsCreateError: Debug + Display + ScopedError;
+    type Origin: Clone + Debug + Display + Eq + Hash;
+    type Resolver: AddrsCreate<
+            DispatchThreadCtx<
+                CompoundFarChannels<
+                    Self::SessionAuth,
+                    Self::AuthNChan,
+                    Self::Unix,
+                    Self::UDP,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsg<Self::HashID>,
+                    LargeObjMsgCodec<Self::Hash>,
+                    LargeObjMsgCodec<Self::Hash>
+                >,
+                Ctx
+            >,
+            Addr = CompoundFarChannelXfrmPeerAddr,
+            Origin = Self::Origin,
+            OriginConfig = CompoundFarEndpoint,
+            Config = Self::ResolverConfig
+        >;
+    type ResolverConfig: Clone + Default + Send;
+    type LargeObjTypes: LargeObjProtoTypes<
+            Self::InMsg,
+            Self::OutMsg,
+            Prin = Self::MsgPrin,
+            SessionPrin = Self::SessionPrin,
+            IDsConfig = Self::IDsConfig,
+            IDs = Self::IDs,
+            HashID = Self::HashID,
+            Hash = Self::Hash,
+            Wrapper = Self::Wrapper,
+            DecoderConfig = Self::DecoderConfig,
+            Decoder = Self::Decoder,
+            EncoderConfig = Self::EncoderConfig,
+            Encoder = Self::Encoder,
+            EncodeError = Self::EncodeError,
+            Msgs = Self::Msgs,
+            Recv = Self::Recv,
+            AuthNMsg = Self::AuthNMsg,
+            MsgAuthN = Self::MsgAuth,
+            AuthNError = Self::MsgAuthError
+        >;
 }

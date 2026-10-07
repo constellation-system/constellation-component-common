@@ -59,9 +59,9 @@ use constellation_common::net::PassthruDatagramXfrm;
 use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::retry::Retry;
 use constellation_common::unix::UnixSocketPath;
-use constellation_component_common::config::UnicastLargeObjBusConfig;
 use constellation_component_common::bus::types::UnicastLargeObjBusTypes;
 use constellation_component_common::bus::unicast::UnicastLargeObjBus;
+use constellation_component_common::config::UnicastLargeObjBusConfig;
 use constellation_streams::frags::Frags;
 use constellation_streams::large_obj::LargeObjID;
 use constellation_streams::large_obj::LargeObjMsg;
@@ -428,13 +428,30 @@ impl LargeObjProtoTypes<Vec<u8>, Vec<u8>> for LargeObjClient {
 }
 
 impl UnicastLargeObjBusTypes<ExampleCtx> for ExampleServerBusTypes {
-    type InMsg = Vec<u8>;
-    type OutMsg = Vec<u8>;
-    type Wrapper = Vec<u8>;
-    type MsgPrin = String;
-    type SessionPrin = String;
+    type AuthNChan = CompoundFarChannelsBasicAuthNedLargeObjChan<
+        String,
+        SHA3Algo,
+        PassthruDatagramXfrm<UnixSocketPath>,
+        PassthruDatagramXfrm<SocketAddr>
+    >;
     type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
-    type LargeObjAuthNMsg = BasicAuthNed<String, LargeObjMsg<SHA3ID>>;
+    type AuthNSession = BasicAuthNed<
+        String,
+        CompoundFlow<
+            PassthruDatagramXfrm<UnixSocketPath>,
+            PassthruDatagramXfrm<SocketAddr>
+        >
+    >;
+    type Decoder = TestBytesCodec;
+    type DecoderConfig = ();
+    type DecoderCreateError = Infallible;
+    type EncodeError = TooShort;
+    type Encoder = TestBytesCodec;
+    type EncoderConfig = ();
+    type EncoderCreateError = Infallible;
+    type Epoch = u128;
+    type Epochs = AscendingCount<u128>;
+    type EpochsConfig = ();
     type Hash = SHA3Algo;
     type HashConfig = ();
     type HashCreateError = Infallible;
@@ -442,61 +459,62 @@ impl UnicastLargeObjBusTypes<ExampleCtx> for ExampleServerBusTypes {
     type IDs = AscendingCount<LargeObjID>;
     type IDsConfig = ();
     type IDsCreateError = Infallible;
-    type LargeObjWrapper = LargeObjMsg<SHA3ID>;
-    type LargeObjMsgAuth = PassthruMsgAuthN<LargeObjMsg<SHA3ID>,
-                                            String>;
+    type InMsg = Vec<u8>;
+    type LargeObjAuthNMsg = BasicAuthNed<String, LargeObjMsg<SHA3ID>>;
+    type LargeObjMsgAuth = PassthruMsgAuthN<LargeObjMsg<SHA3ID>, String>;
     type LargeObjMsgAuthConfig = ();
-    type SessionAuth = BasicAuthN<String>;
-    type AuthNSession = BasicAuthNed<
-        String,
-        CompoundFlow<PassthruDatagramXfrm<UnixSocketPath>,
-                     PassthruDatagramXfrm<SocketAddr>>
-    >;
-    type SessionAuthConfig = BasicAuthNConfig<String>;
-    type SessionAuthNError = Infallible;
-    type AuthNChan = CompoundFarChannelsBasicAuthNedLargeObjChan<
-        String,
-        SHA3Algo,
-        PassthruDatagramXfrm<UnixSocketPath>,
-        PassthruDatagramXfrm<SocketAddr>,
-    >;
+    type LargeObjTypes = LargeObjServer;
+    type LargeObjWrapper = LargeObjMsg<SHA3ID>;
     type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
     type MsgAuthConfig = ();
     type MsgAuthCreateError = Infallible;
     type MsgAuthError = Infallible;
-    type Encoder = TestBytesCodec;
-    type EncoderConfig = ();
-    type EncodeError = TooShort;
-    type EncoderCreateError = Infallible;
-    type Decoder = TestBytesCodec;
-    type DecoderConfig = ();
-    type DecoderCreateError = Infallible;
-    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
-    type UnixConfig = PassthruDatagramXfrmParam;
-    type UnixError = Infallible;
+    type MsgPrin = String;
+    type Msgs = ExampleServerMsgs;
+    type Origin = CompoundFarEndpoint;
+    type OutMsg = Vec<u8>;
+    type Recv = ExampleServerRecv;
+    type Resolver =
+        MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>;
+    type ResolverConfig = ResolverConfig;
+    type SessionAuth = BasicAuthN<String>;
+    type SessionAuthConfig = BasicAuthNConfig<String>;
+    type SessionAuthNError = Infallible;
+    type SessionPrin = String;
     type UDP = PassthruDatagramXfrm<SocketAddr>;
     type UDPConfig = PassthruDatagramXfrmParam;
     type UDPError = Infallible;
-    type Epoch = u128;
-    type Epochs = AscendingCount<u128>;
-    type EpochsConfig = ();
-    type Resolver = MixedResolver<CompoundFarChannelXfrmPeerAddr,
-                                  CompoundFarEndpoint>;
-    type Origin = CompoundFarEndpoint;
-    type ResolverConfig = ResolverConfig;
-    type Msgs = ExampleServerMsgs;
-    type Recv = ExampleServerRecv;
-    type LargeObjTypes = LargeObjServer;
+    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
+    type UnixConfig = PassthruDatagramXfrmParam;
+    type UnixError = Infallible;
+    type Wrapper = Vec<u8>;
 }
 
 impl UnicastLargeObjBusTypes<ExampleCtx> for ExampleClientBusTypes {
-    type InMsg = Vec<u8>;
-    type OutMsg = Vec<u8>;
-    type Wrapper = Vec<u8>;
-    type MsgPrin = String;
-    type SessionPrin = String;
+    type AuthNChan = CompoundFarChannelsBasicAuthNedLargeObjChan<
+        String,
+        SHA3Algo,
+        PassthruDatagramXfrm<UnixSocketPath>,
+        PassthruDatagramXfrm<SocketAddr>
+    >;
     type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
-    type LargeObjAuthNMsg = BasicAuthNed<String, LargeObjMsg<SHA3ID>>;
+    type AuthNSession = BasicAuthNed<
+        String,
+        CompoundFlow<
+            PassthruDatagramXfrm<UnixSocketPath>,
+            PassthruDatagramXfrm<SocketAddr>
+        >
+    >;
+    type Decoder = TestBytesCodec;
+    type DecoderConfig = ();
+    type DecoderCreateError = Infallible;
+    type EncodeError = TooShort;
+    type Encoder = TestBytesCodec;
+    type EncoderConfig = ();
+    type EncoderCreateError = Infallible;
+    type Epoch = u128;
+    type Epochs = AscendingCount<u128>;
+    type EpochsConfig = ();
     type Hash = SHA3Algo;
     type HashConfig = ();
     type HashCreateError = Infallible;
@@ -504,51 +522,35 @@ impl UnicastLargeObjBusTypes<ExampleCtx> for ExampleClientBusTypes {
     type IDs = AscendingCount<LargeObjID>;
     type IDsConfig = ();
     type IDsCreateError = Infallible;
-    type LargeObjWrapper = LargeObjMsg<SHA3ID>;
-    type LargeObjMsgAuth = PassthruMsgAuthN<LargeObjMsg<SHA3ID>,
-                                            String>;
+    type InMsg = Vec<u8>;
+    type LargeObjAuthNMsg = BasicAuthNed<String, LargeObjMsg<SHA3ID>>;
+    type LargeObjMsgAuth = PassthruMsgAuthN<LargeObjMsg<SHA3ID>, String>;
     type LargeObjMsgAuthConfig = ();
-    type SessionAuth = BasicAuthN<String>;
-    type AuthNSession = BasicAuthNed<
-        String,
-        CompoundFlow<PassthruDatagramXfrm<UnixSocketPath>,
-                     PassthruDatagramXfrm<SocketAddr>>
-    >;
-    type SessionAuthConfig = BasicAuthNConfig<String>;
-    type SessionAuthNError = Infallible;
-    type AuthNChan = CompoundFarChannelsBasicAuthNedLargeObjChan<
-        String,
-        SHA3Algo,
-        PassthruDatagramXfrm<UnixSocketPath>,
-        PassthruDatagramXfrm<SocketAddr>,
-    >;
+    type LargeObjTypes = LargeObjClient;
+    type LargeObjWrapper = LargeObjMsg<SHA3ID>;
     type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
     type MsgAuthConfig = ();
     type MsgAuthCreateError = Infallible;
     type MsgAuthError = Infallible;
-    type Encoder = TestBytesCodec;
-    type EncoderConfig = ();
-    type EncodeError = TooShort;
-    type EncoderCreateError = Infallible;
-    type Decoder = TestBytesCodec;
-    type DecoderConfig = ();
-    type DecoderCreateError = Infallible;
-    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
-    type UnixConfig = PassthruDatagramXfrmParam;
-    type UnixError = Infallible;
+    type MsgPrin = String;
+    type Msgs = ExampleClientMsgs;
+    type Origin = CompoundFarEndpoint;
+    type OutMsg = Vec<u8>;
+    type Recv = ExampleClientRecv;
+    type Resolver =
+        MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>;
+    type ResolverConfig = ResolverConfig;
+    type SessionAuth = BasicAuthN<String>;
+    type SessionAuthConfig = BasicAuthNConfig<String>;
+    type SessionAuthNError = Infallible;
+    type SessionPrin = String;
     type UDP = PassthruDatagramXfrm<SocketAddr>;
     type UDPConfig = PassthruDatagramXfrmParam;
     type UDPError = Infallible;
-    type Epoch = u128;
-    type Epochs = AscendingCount<u128>;
-    type EpochsConfig = ();
-    type Resolver = MixedResolver<CompoundFarChannelXfrmPeerAddr,
-                                  CompoundFarEndpoint>;
-    type Origin = CompoundFarEndpoint;
-    type ResolverConfig = ResolverConfig;
-    type Msgs = ExampleClientMsgs;
-    type Recv = ExampleClientRecv;
-    type LargeObjTypes = LargeObjClient;
+    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
+    type UnixConfig = PassthruDatagramXfrmParam;
+    type UnixError = Infallible;
+    type Wrapper = Vec<u8>;
 }
 
 fn server(conf: &str) {
@@ -580,10 +582,7 @@ fn server(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = UnicastLargeObjBus::<
-        ExampleServerBusTypes,
-        ExampleCtx,
-    >::start(
+    let bus = UnicastLargeObjBus::<ExampleServerBusTypes, ExampleCtx>::start(
         bus_config, ctx, recv, msgs
     )
     .unwrap();
@@ -621,10 +620,7 @@ fn client(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = UnicastLargeObjBus::<
-        ExampleClientBusTypes,
-        ExampleCtx,
-    >::start(
+    let bus = UnicastLargeObjBus::<ExampleClientBusTypes, ExampleCtx>::start(
         bus_config, ctx, recv, msgs
     )
     .unwrap();

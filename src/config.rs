@@ -16,6 +16,7 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use constellation_channels::config::CompoundFarDispatchThreadConfig;
 use constellation_channels::config::CompoundFarMulticastPollThreadConfig;
 use constellation_channels::config::CompoundFarSelectorPollThreadConfig;
 use constellation_channels::config::ResolverConfig;
@@ -30,11 +31,78 @@ use constellation_streams::config::SharedLargeObjModeConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
-pub type DispatchDatagramBusConfig<Channels, Epochs, Auth> =
-    DispatchBusConfig<Channels, Epochs, PrivateDatagramModeConfig, Auth>;
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "unicast-datagram-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct DispatchDatagramBusConfig<
+    SessAuth,
+    MsgAuth,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    Epochs
+> where
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default {
+    msg_authn: MsgAuth,
+    #[serde(default)]
+    #[serde(flatten)]
+    dispatch: DispatchConfig<Epochs>,
+    #[serde(flatten)]
+    thread: CompoundFarDispatchThreadConfig<
+        SessAuth,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig
+    >
+}
 
-pub type DispatchLargeObjBusConfig<Channels, Epochs, Auth> =
-    DispatchBusConfig<Channels, Epochs, PrivateLargeObjModeConfig, Auth>;
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "unicast-large-obj-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct DispatchLargeObjBusConfig<
+    Hash,
+    SessAuth,
+    MsgAuth,
+    ProtoAuth,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Epochs
+> where
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    Hash: Default,
+    IDs: Default,
+    UDP: Default {
+    msg_authn: MsgAuth,
+    #[serde(flatten)]
+    dispatch: DispatchConfig<Epochs>,
+    #[serde(flatten)]
+    thread: CompoundFarDispatchThreadConfig<
+        SessAuth,
+        Unix,
+        UDP,
+        (),
+        (),
+        PrivateLargeObjModeConfig
+    >,
+    #[serde(flatten)]
+    large_obj: LargeObjProtoConfig<Enc, Dec, IDs>,
+    large_obj_msg_authn: ProtoAuth,
+    #[serde(default)]
+    hash: Hash
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "multicast-datagram-bus")]
@@ -49,8 +117,7 @@ pub struct MulticastDatagramBusConfig<
     Resolver,
     Epochs,
     MsgAuthN
->
-where
+> where
     Epochs: Default,
     Resolver: Default,
     Enc: Default,
@@ -79,9 +146,20 @@ where
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "multicast-large-obj-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct MulticastLargeObjBusConfig<Party, Hash, AuthN, ProtoAuthN, Unix, UDP,
-                                      Enc, Dec, IDs, Resolver, Epochs, MsgAuthN>
-where
+pub struct MulticastLargeObjBusConfig<
+    Party,
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
     Epochs: Default,
     Resolver: Default,
     Hash: Default,
@@ -117,9 +195,16 @@ where
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "unicast-datagram-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastDatagramBusConfig<AuthN, Unix, UDP, Enc, Dec,
-                                    Resolver, Epochs, MsgAuthN>
-where
+pub struct UnicastDatagramBusConfig<
+    AuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
     Epochs: Default,
     Resolver: Default,
     Enc: Default,
@@ -128,17 +213,35 @@ where
     UDP: Default {
     #[serde(flatten)]
     thread: CompoundFarSelectorPollThreadConfig<
-        AuthN, Unix, UDP, Enc, Dec, PrivateDatagramModeConfig,
-        Resolver, Epochs, String, MsgAuthN
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
     >
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "unicast-large-obj-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastLargeObjBusConfig<Hash, AuthN, ProtoAuthN, Unix, UDP,
-                                    Enc, Dec, IDs, Resolver, Epochs, MsgAuthN>
-where
+pub struct UnicastLargeObjBusConfig<
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
     Epochs: Default,
     Resolver: Default,
     Hash: Default,
@@ -149,14 +252,22 @@ where
     UDP: Default {
     #[serde(flatten)]
     thread: CompoundFarSelectorPollThreadConfig<
-        AuthN, Unix, UDP, (), (), PrivateLargeObjModeConfig,
-        Resolver, Epochs, String, ProtoAuthN
+        AuthN,
+        Unix,
+        UDP,
+        (),
+        (),
+        PrivateLargeObjModeConfig,
+        Resolver,
+        Epochs,
+        String,
+        ProtoAuthN
     >,
     #[serde(flatten)]
     large_obj: LargeObjProtoConfig<Enc, Dec, IDs>,
     large_obj_msg_authn: MsgAuthN,
     #[serde(default)]
-    hash: Hash,
+    hash: Hash
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
@@ -248,91 +359,149 @@ where
     }
 }
 
-impl<AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
-    UnicastDatagramBusConfig<AuthN, Unix, UDP, Enc, Dec,
-                             Resolver, Epochs, MsgAuthN>
+impl<SessAuth, MsgAuth, Unix, UDP, Enc, Dec, Epochs>
+    DispatchDatagramBusConfig<SessAuth, MsgAuth, Unix, UDP, Enc, Dec, Epochs>
 where
     Epochs: Default,
-    Resolver: Default,
     Enc: Default,
     Dec: Default,
     Unix: Default,
-    UDP: Default {
-    #[inline]
-    pub fn take(
-        self
-    ) -> CompoundFarSelectorPollThreadConfig<
-        AuthN, Unix, UDP, Enc, Dec, PrivateDatagramModeConfig,
-        Resolver, Epochs, String, MsgAuthN
-    > {
-        self.thread
-    }
-}
-
-impl<Hash, AuthN, ProtoAuthN, Unix, UDP, Enc, Dec,
-     IDs, Resolver, Epochs, MsgAuthN>
-    UnicastLargeObjBusConfig<Hash, AuthN, ProtoAuthN, Unix, UDP,
-                             Enc, Dec, IDs, Resolver, Epochs, MsgAuthN>
-where
-    Epochs: Default,
-    Resolver: Default,
-    Hash: Default,
-    IDs: Default,
-    Enc: Default,
-    Dec: Default,
-    Unix: Default,
-    UDP: Default {
+    UDP: Default
+{
     #[inline]
     pub fn take(
         self
     ) -> (
-        CompoundFarSelectorPollThreadConfig<
-            AuthN, Unix, UDP, (), (), PrivateLargeObjModeConfig,
-            Resolver, Epochs, String, ProtoAuthN
-        >,
-        LargeObjProtoConfig<Enc, Dec, IDs>,
-        MsgAuthN,
-        Hash
+        MsgAuth,
+        DispatchConfig<Epochs>,
+        CompoundFarDispatchThreadConfig<
+            SessAuth,
+            Unix,
+            UDP,
+            Enc,
+            Dec,
+            PrivateDatagramModeConfig
+        >
     ) {
-        (self.thread, self.large_obj, self.large_obj_msg_authn, self.hash)
+        (self.msg_authn, self.dispatch, self.thread)
     }
 }
 
-impl<Party, AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
-    MulticastDatagramBusConfig<Party, AuthN, Unix, UDP, Enc, Dec,
-                               Resolver, Epochs, MsgAuthN>
+impl<Hash, SessAuth, MsgAuth, ProtoAuth, Unix, UDP, Enc, Dec, IDs, Epochs>
+    DispatchLargeObjBusConfig<
+        Hash,
+        SessAuth,
+        MsgAuth,
+        ProtoAuth,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Epochs
+    >
 where
     Epochs: Default,
-    Resolver: Default,
     Enc: Default,
     Dec: Default,
     Unix: Default,
-    UDP: Default {
+    Hash: Default,
+    IDs: Default,
+    UDP: Default
+{
     #[inline]
     pub fn take(
         self
-    ) -> (CompoundFarMulticastPollThreadConfig<
+    ) -> (
+        MsgAuth,
+        DispatchConfig<Epochs>,
+        CompoundFarDispatchThreadConfig<
+            SessAuth,
+            Unix,
+            UDP,
+            (),
+            (),
+            PrivateLargeObjModeConfig
+        >,
+        LargeObjProtoConfig<Enc, Dec, IDs>,
+        ProtoAuth,
+        Hash
+    ) {
+        (
+            self.msg_authn,
+            self.dispatch,
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash
+        )
+    }
+}
+
+impl<AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
+    UnicastDatagramBusConfig<
         AuthN,
         Unix,
         UDP,
         Enc,
         Dec,
-        SharedDatagramModeConfig,
-        Party,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
+    #[inline]
+    pub fn take(
+        self
+    ) -> CompoundFarSelectorPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig,
         Resolver,
         Epochs,
         String,
         MsgAuthN
-    >,
-    Option<Party>) {
-        (self.thread, self.self_party)
+    > {
+        self.thread
     }
 }
 
-impl<Party, Hash, AuthN, ProtoAuthN, Unix, UDP, Enc, Dec,
-     IDs, Resolver, Epochs, MsgAuthN>
-    MulticastLargeObjBusConfig<Party, Hash, AuthN, ProtoAuthN, Unix, UDP,
-                               Enc, Dec, IDs, Resolver, Epochs, MsgAuthN>
+impl<
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+>
+    UnicastLargeObjBusConfig<
+        Hash,
+        AuthN,
+        ProtoAuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
 where
     Epochs: Default,
     Resolver: Default,
@@ -341,7 +510,118 @@ where
     Enc: Default,
     Dec: Default,
     Unix: Default,
-    UDP: Default {
+    UDP: Default
+{
+    #[inline]
+    pub fn take(
+        self
+    ) -> (
+        CompoundFarSelectorPollThreadConfig<
+            AuthN,
+            Unix,
+            UDP,
+            (),
+            (),
+            PrivateLargeObjModeConfig,
+            Resolver,
+            Epochs,
+            String,
+            ProtoAuthN
+        >,
+        LargeObjProtoConfig<Enc, Dec, IDs>,
+        MsgAuthN,
+        Hash
+    ) {
+        (
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash
+        )
+    }
+}
+
+impl<Party, AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
+    MulticastDatagramBusConfig<
+        Party,
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
+    #[inline]
+    pub fn take(
+        self
+    ) -> (
+        CompoundFarMulticastPollThreadConfig<
+            AuthN,
+            Unix,
+            UDP,
+            Enc,
+            Dec,
+            SharedDatagramModeConfig,
+            Party,
+            Resolver,
+            Epochs,
+            String,
+            MsgAuthN
+        >,
+        Option<Party>
+    ) {
+        (self.thread, self.self_party)
+    }
+}
+
+impl<
+    Party,
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+>
+    MulticastLargeObjBusConfig<
+        Party,
+        Hash,
+        AuthN,
+        ProtoAuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Hash: Default,
+    IDs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
     #[inline]
     pub fn take(
         self
@@ -364,8 +644,13 @@ where
         Hash,
         Option<Party>
     ) {
-        (self.thread, self.large_obj, self.large_obj_msg_authn,
-         self.hash, self.self_party)
+        (
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash,
+            self.self_party
+        )
     }
 }
 

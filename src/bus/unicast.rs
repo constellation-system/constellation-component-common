@@ -36,10 +36,10 @@ use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::UnicastDatagramBusConfig;
-use crate::config::UnicastLargeObjBusConfig;
 use crate::bus::types::UnicastDatagramBusTypes;
 use crate::bus::types::UnicastLargeObjBusTypes;
+use crate::config::UnicastDatagramBusConfig;
+use crate::config::UnicastLargeObjBusConfig;
 
 pub struct UnicastDatagramBus<Types, Ctx>
 where
@@ -61,24 +61,17 @@ where
 
 #[derive(Debug)]
 pub enum UnicastLargeObjBusCreateError<Hash, Auth, Proto> {
-    Hash {
-        err: Hash
-    },
-    IO {
-        err: Error
-    },
-    Auth {
-        err: Auth
-    },
-    Proto {
-        err: Proto
-    },
+    Hash { err: Hash },
+    IO { err: Error },
+    Auth { err: Auth },
+    Proto { err: Proto }
 }
 
 impl<Types, Ctx> UnicastDatagramBus<Types, Ctx>
 where
     Types: 'static + UnicastDatagramBusTypes<Ctx>,
-    Ctx: 'static + NSNameCachesCtx + Send {
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn start(
         config: UnicastDatagramBusConfig<
             Types::SessionAuthConfig,
@@ -117,9 +110,7 @@ where
                 Types::Recv,
                 Ctx
             >
-        >::start(
-            poll_config, None, ctx, recv, msgs
-        )?;
+        >::start(poll_config, None, ctx, recv, msgs)?;
 
         Ok(UnicastDatagramBus {
             types: PhantomData,
@@ -142,7 +133,8 @@ where
 impl<Types, Ctx> UnicastLargeObjBus<Types, Ctx>
 where
     Types: 'static + UnicastLargeObjBusTypes<Ctx>,
-    Ctx: 'static + NSNameCachesCtx + Send {
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn start(
         config: UnicastLargeObjBusConfig<
             Types::HashConfig,
@@ -178,18 +170,14 @@ where
         let (poll_config, large_obj_config, proto_auth_config, hash_config) =
             config.take();
         let hash = Types::Hash::create(hash_config)
-            .map_err(|err| UnicastLargeObjBusCreateError::Hash {
-                err: err
-            })?;
+            .map_err(|err| UnicastLargeObjBusCreateError::Hash { err: err })?;
         let msgauth = Types::MsgAuth::create(proto_auth_config)
-            .map_err(|err| UnicastLargeObjBusCreateError::Auth {
-                err: err
-            })?;
+            .map_err(|err| UnicastLargeObjBusCreateError::Auth { err: err })?;
         let large_obj =
             LargeObjProto::create(large_obj_config, recv, msgs, msgauth, hash)
-            .map_err(|err| UnicastLargeObjBusCreateError::Proto {
-                err: err
-            })?;
+                .map_err(|err| UnicastLargeObjBusCreateError::Proto {
+                    err: err
+                })?;
         let large_obj = Arc::new(Mutex::new(large_obj));
         let poll_join = PollThread::<
             Ctx,
@@ -210,9 +198,7 @@ where
         >::start(
             poll_config, None, ctx, large_obj.clone(), large_obj
         )
-            .map_err(|err| UnicastLargeObjBusCreateError::IO {
-                err: err
-            })?;
+        .map_err(|err| UnicastLargeObjBusCreateError::IO { err: err })?;
 
         Ok(UnicastLargeObjBus {
             types: PhantomData,
@@ -232,13 +218,13 @@ where
     }
 }
 
-
 impl<Hash, Auth, Proto> Display
     for UnicastLargeObjBusCreateError<Hash, Auth, Proto>
 where
     Proto: Display,
     Auth: Display,
-    Hash: Display {
+    Hash: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>

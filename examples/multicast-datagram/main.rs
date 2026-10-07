@@ -53,9 +53,9 @@ use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::net::SharedMsgs;
 use constellation_common::retry::Retry;
 use constellation_common::unix::UnixSocketPath;
-use constellation_component_common::config::MulticastDatagramBusConfig;
-use constellation_component_common::bus::types::MulticastDatagramBusTypes;
 use constellation_component_common::bus::multicast::MulticastDatagramBus;
+use constellation_component_common::bus::types::MulticastDatagramBusTypes;
+use constellation_component_common::config::MulticastDatagramBusConfig;
 use constellation_streams::threads::Tokens;
 use constellation_streams::threads::TokensCtx;
 use constellation_streams::threads::poll::MsgsWaker;
@@ -131,7 +131,6 @@ impl MsgsWaker for ExampleClientMsgs {
         Ok(())
     }
 }
-
 
 impl<Party> SharedMsgs<Party, Vec<u8>> for ExampleClientMsgs
 where
@@ -318,20 +317,6 @@ impl TokensCtx for ExampleCtx {
 }
 
 impl MulticastDatagramBusTypes<ExampleCtx> for ExampleServerBusTypes {
-    type OutMsg = Vec<u8>;
-    type InMsg = Vec<u8>;
-    type Wrapper = Vec<u8>;
-    type MsgPrin = String;
-    type SessionPrin = String;
-    type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
-    type SessionAuth = BasicAuthN<String>;
-    type AuthNSession = BasicAuthNed<
-        String,
-        CompoundFlow<PassthruDatagramXfrm<UnixSocketPath>,
-                     PassthruDatagramXfrm<SocketAddr>>
-    >;
-    type SessionAuthConfig = BasicAuthNConfig<String>;
-    type SessionAuthNError = Infallible;
     type AuthNChan = CompoundFarChannelsBasicAuthNedDatagramChan<
         String,
         Vec<u8>,
@@ -341,47 +326,49 @@ impl MulticastDatagramBusTypes<ExampleCtx> for ExampleServerBusTypes {
         TestBytesCodec,
         TestBytesCodec
     >;
-    type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
-    type MsgAuthConfig = ();
-    type Encoder = TestBytesCodec;
-    type EncoderConfig = ();
-    type EncodeError = TooShort;
-    type EncoderCreateError = Infallible;
+    type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
+    type AuthNSession = BasicAuthNed<
+        String,
+        CompoundFlow<
+            PassthruDatagramXfrm<UnixSocketPath>,
+            PassthruDatagramXfrm<SocketAddr>
+        >
+    >;
     type Decoder = TestBytesCodec;
     type DecoderConfig = ();
     type DecoderCreateError = Infallible;
-    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
-    type UnixConfig = PassthruDatagramXfrmParam;
-    type UnixError = Infallible;
-    type UDP = PassthruDatagramXfrm<SocketAddr>;
-    type UDPConfig = PassthruDatagramXfrmParam;
-    type UDPError = Infallible;
+    type EncodeError = TooShort;
+    type Encoder = TestBytesCodec;
+    type EncoderConfig = ();
+    type EncoderCreateError = Infallible;
     type Epoch = u128;
     type Epochs = AscendingCount<u128>;
     type EpochsConfig = ();
-    type Resolver = MixedResolver<CompoundFarChannelXfrmPeerAddr,
-                                  CompoundFarEndpoint>;
-    type Origin = CompoundFarEndpoint;
-    type ResolverConfig = ResolverConfig;
+    type InMsg = Vec<u8>;
+    type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
+    type MsgAuthConfig = ();
+    type MsgPrin = String;
     type Msgs = ExampleServerMsgs;
+    type Origin = CompoundFarEndpoint;
+    type OutMsg = Vec<u8>;
     type Recv = ExampleServerRecv;
+    type Resolver =
+        MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>;
+    type ResolverConfig = ResolverConfig;
+    type SessionAuth = BasicAuthN<String>;
+    type SessionAuthConfig = BasicAuthNConfig<String>;
+    type SessionAuthNError = Infallible;
+    type SessionPrin = String;
+    type UDP = PassthruDatagramXfrm<SocketAddr>;
+    type UDPConfig = PassthruDatagramXfrmParam;
+    type UDPError = Infallible;
+    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
+    type UnixConfig = PassthruDatagramXfrmParam;
+    type UnixError = Infallible;
+    type Wrapper = Vec<u8>;
 }
 
 impl MulticastDatagramBusTypes<ExampleCtx> for ExampleClientBusTypes {
-    type OutMsg = Vec<u8>;
-    type InMsg = Vec<u8>;
-    type Wrapper = Vec<u8>;
-    type MsgPrin = String;
-    type SessionPrin = String;
-    type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
-    type SessionAuth = BasicAuthN<String>;
-    type AuthNSession = BasicAuthNed<
-        String,
-        CompoundFlow<PassthruDatagramXfrm<UnixSocketPath>,
-                     PassthruDatagramXfrm<SocketAddr>>
-    >;
-    type SessionAuthConfig = BasicAuthNConfig<String>;
-    type SessionAuthNError = Infallible;
     type AuthNChan = CompoundFarChannelsBasicAuthNedDatagramChan<
         String,
         Vec<u8>,
@@ -391,30 +378,46 @@ impl MulticastDatagramBusTypes<ExampleCtx> for ExampleClientBusTypes {
         TestBytesCodec,
         TestBytesCodec
     >;
-    type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
-    type MsgAuthConfig = ();
-    type Encoder = TestBytesCodec;
-    type EncoderConfig = ();
-    type EncodeError = TooShort;
-    type EncoderCreateError = Infallible;
+    type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
+    type AuthNSession = BasicAuthNed<
+        String,
+        CompoundFlow<
+            PassthruDatagramXfrm<UnixSocketPath>,
+            PassthruDatagramXfrm<SocketAddr>
+        >
+    >;
     type Decoder = TestBytesCodec;
     type DecoderConfig = ();
     type DecoderCreateError = Infallible;
-    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
-    type UnixConfig = PassthruDatagramXfrmParam;
-    type UnixError = Infallible;
-    type UDP = PassthruDatagramXfrm<SocketAddr>;
-    type UDPConfig = PassthruDatagramXfrmParam;
-    type UDPError = Infallible;
+    type EncodeError = TooShort;
+    type Encoder = TestBytesCodec;
+    type EncoderConfig = ();
+    type EncoderCreateError = Infallible;
     type Epoch = u128;
     type Epochs = AscendingCount<u128>;
     type EpochsConfig = ();
-    type Resolver = MixedResolver<CompoundFarChannelXfrmPeerAddr,
-                                  CompoundFarEndpoint>;
-    type Origin = CompoundFarEndpoint;
-    type ResolverConfig = ResolverConfig;
+    type InMsg = Vec<u8>;
+    type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
+    type MsgAuthConfig = ();
+    type MsgPrin = String;
     type Msgs = ExampleClientMsgs;
+    type Origin = CompoundFarEndpoint;
+    type OutMsg = Vec<u8>;
     type Recv = ExampleClientRecv;
+    type Resolver =
+        MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>;
+    type ResolverConfig = ResolverConfig;
+    type SessionAuth = BasicAuthN<String>;
+    type SessionAuthConfig = BasicAuthNConfig<String>;
+    type SessionAuthNError = Infallible;
+    type SessionPrin = String;
+    type UDP = PassthruDatagramXfrm<SocketAddr>;
+    type UDPConfig = PassthruDatagramXfrmParam;
+    type UDPError = Infallible;
+    type Unix = PassthruDatagramXfrm<UnixSocketPath>;
+    type UnixConfig = PassthruDatagramXfrmParam;
+    type UnixError = Infallible;
+    type Wrapper = Vec<u8>;
 }
 
 fn server(conf: &str) {
@@ -444,10 +447,7 @@ fn server(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = MulticastDatagramBus::<
-        ExampleServerBusTypes,
-        ExampleCtx,
-    >::start(
+    let bus = MulticastDatagramBus::<ExampleServerBusTypes, ExampleCtx>::start(
         bus_config, ctx, recv, msgs
     )
     .unwrap();
@@ -483,10 +483,7 @@ fn client(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = MulticastDatagramBus::<
-        ExampleClientBusTypes,
-        ExampleCtx,
-    >::start(
+    let bus = MulticastDatagramBus::<ExampleClientBusTypes, ExampleCtx>::start(
         bus_config, ctx, recv, msgs
     )
     .unwrap();

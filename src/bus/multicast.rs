@@ -39,10 +39,10 @@ use log::debug;
 use log::error;
 use log::info;
 
-use crate::config::MulticastDatagramBusConfig;
-use crate::config::MulticastLargeObjBusConfig;
 use crate::bus::types::MulticastDatagramBusTypes;
 use crate::bus::types::MulticastLargeObjBusTypes;
+use crate::config::MulticastDatagramBusConfig;
+use crate::config::MulticastLargeObjBusConfig;
 
 pub struct MulticastDatagramBus<Types, Ctx>
 where
@@ -64,27 +64,18 @@ where
 
 #[derive(Debug)]
 pub enum MulticastLargeObjBusCreateError<Hash, Auth, Proto, Parties> {
-    Hash {
-        err: Hash
-    },
-    IO {
-        err: Error
-    },
-    Auth {
-        err: Auth
-    },
-    Proto {
-        err: Proto
-    },
-    Parties {
-        err: Parties
-    }
+    Hash { err: Hash },
+    IO { err: Error },
+    Auth { err: Auth },
+    Proto { err: Proto },
+    Parties { err: Parties }
 }
 
 impl<Types, Ctx> MulticastDatagramBus<Types, Ctx>
 where
     Types: 'static + MulticastDatagramBusTypes<Ctx>,
-    Ctx: 'static + NSNameCachesCtx + Send {
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn start(
         config: MulticastDatagramBusConfig<
             Types::SessionPrin,
@@ -105,28 +96,27 @@ where
               "creating multicast datagram bus");
 
         let (poll_config, self_party) = config.take();
-        let poll_join = PollThread::<
-            Ctx,
-            CompoundFarChannelsDatagramMulticastPollTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::Wrapper,
-                Types::Encoder,
-                Types::Decoder,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::MsgAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                Types::Msgs,
-                Types::Recv,
-                Ctx
-            >
-        >::start(
-            poll_config, self_party, ctx, recv, msgs
-        )?;
+        let poll_join =
+            PollThread::<
+                Ctx,
+                CompoundFarChannelsDatagramMulticastPollTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::Wrapper,
+                    Types::Encoder,
+                    Types::Decoder,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::MsgAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    Types::Msgs,
+                    Types::Recv,
+                    Ctx
+                >
+            >::start(poll_config, self_party, ctx, recv, msgs)?;
 
         Ok(MulticastDatagramBus {
             types: PhantomData,
@@ -149,7 +139,8 @@ where
 impl<Types, Ctx> MulticastLargeObjBus<Types, Ctx>
 where
     Types: 'static + MulticastLargeObjBusTypes<Ctx>,
-    Ctx: 'static + NSNameCachesCtx + Send {
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn start(
         config: MulticastLargeObjBusConfig<
             Types::SessionPrin,
@@ -184,52 +175,54 @@ where
         info!(target: "multicast-large-obj-bus",
               "creating multicast large object bus");
 
-        let (poll_config, large_obj_config, proto_auth_config,
-             hash_config, self_party) =
-            config.take();
-        let hash = Types::Hash::create(hash_config)
-            .map_err(|err| MulticastLargeObjBusCreateError::Hash {
-                err: err
-            })?;
-        let msgauth = Types::MsgAuth::create(proto_auth_config)
-            .map_err(|err| MulticastLargeObjBusCreateError::Auth {
-                err: err
+        let (
+            poll_config,
+            large_obj_config,
+            proto_auth_config,
+            hash_config,
+            self_party
+        ) = config.take();
+        let hash = Types::Hash::create(hash_config).map_err(|err| {
+            MulticastLargeObjBusCreateError::Hash { err: err }
+        })?;
+        let msgauth =
+            Types::MsgAuth::create(proto_auth_config).map_err(|err| {
+                MulticastLargeObjBusCreateError::Auth { err: err }
             })?;
         let mut large_obj =
             LargeObjProto::create(large_obj_config, recv, msgs, msgauth, hash)
-            .map_err(|err| MulticastLargeObjBusCreateError::Proto {
-                err: err
-            })?;
+                .map_err(|err| MulticastLargeObjBusCreateError::Proto {
+                    err: err
+                })?;
 
         // XXX this is a hacky and wrong way to set parties; it should
         // be done in the manager thread.
-        let nparties = poll_config.stream()
+        let nparties = poll_config
+            .stream()
             .parties()
             .iter()
-            .filter(|ent| self_party.as_ref()
-                    .is_none_or(|self_party| self_party != ent.party()))
+            .filter(|ent| {
+                self_party
+                    .as_ref()
+                    .is_none_or(|self_party| self_party != ent.party())
+            })
             .count();
         let parties = poll_config
             .stream()
             .parties()
             .iter()
-            .filter(|ent| self_party.as_ref()
-                    .is_none_or(|self_party| self_party != ent.party()))
+            .filter(|ent| {
+                self_party
+                    .as_ref()
+                    .is_none_or(|self_party| self_party != ent.party())
+            })
             .enumerate()
-            .map(|(i, ent)| {
-
-                debug!(target: "HERE",
-                       "creating party entry {} for {}",
-                       i, ent.party());
-
-                (MulticastStreamIdx::from(i), ent.party().clone())
-            });
+            .map(|(i, ent)| (MulticastStreamIdx::from(i), ent.party().clone()));
         let params = vec![Retry::default(); nparties];
 
-        large_obj.set_parties(params, parties)
-            .map_err(|err| MulticastLargeObjBusCreateError::Parties {
-                err: err
-            })?;
+        large_obj.set_parties(params, parties).map_err(|err| {
+            MulticastLargeObjBusCreateError::Parties { err: err }
+        })?;
 
         let large_obj = Arc::new(Mutex::new(large_obj));
         let poll_join = PollThread::<
@@ -249,11 +242,13 @@ where
                 Ctx
             >
         >::start(
-            poll_config, self_party, ctx, large_obj.clone(), large_obj
+            poll_config,
+            self_party,
+            ctx,
+            large_obj.clone(),
+            large_obj
         )
-            .map_err(|err| MulticastLargeObjBusCreateError::IO {
-                err: err
-            })?;
+        .map_err(|err| MulticastLargeObjBusCreateError::IO { err: err })?;
 
         Ok(MulticastLargeObjBus {
             types: PhantomData,
@@ -279,7 +274,8 @@ where
     Parties: Display,
     Proto: Display,
     Auth: Display,
-    Hash: Display {
+    Hash: Display
+{
     fn fmt(
         &self,
         f: &mut Formatter<'_>
