@@ -24,3 +24,5 @@ channels:
       path: bus-example-server-large-obj.sock
 
 msg-authn: null
+
+large-obj-msg-authn: null

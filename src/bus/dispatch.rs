@@ -154,7 +154,7 @@ where
 
 struct DatagramDispatcher<Types, SessionDisp, Ctx>
 where
-    SessionDisp: SessionDispatch<Types>,
+    SessionDisp: SessionDispatch<Types::DispTypes>,
     Types: DispatchDatagramBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send {
     session: SessionDisp,
@@ -164,7 +164,7 @@ where
 
 struct LargeObjDispatcher<Types, SessionDisp, Ctx>
 where
-    SessionDisp: SessionDispatch<Types>,
+    SessionDisp: SessionDispatch<Types::DispTypes>,
     Types: DispatchLargeObjBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send {
     session: SessionDisp,
@@ -201,7 +201,7 @@ impl<Types, SessionDisp, Ctx>
         Ctx
     > for DatagramDispatcher<Types, SessionDisp, Ctx>
 where
-    SessionDisp: SessionDispatch<Types>,
+    SessionDisp: SessionDispatch<Types::DispTypes>,
     Types: DispatchDatagramBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send
 {
@@ -286,7 +286,7 @@ impl<Types, SessionDisp, Ctx>
         Ctx
     > for LargeObjDispatcher<Types, SessionDisp, Ctx>
 where
-    SessionDisp: SessionDispatch<Types>,
+    SessionDisp: SessionDispatch<Types::DispTypes>,
     Types: DispatchLargeObjBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send
 {
@@ -395,7 +395,7 @@ where
         ctx: Ctx
     ) -> Result<Self, Error>
     where
-        SessionDisp: 'static + SessionDispatch<Types> + Send {
+        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
         info!(target: "dispatch-datagram-bus",
               "creating dispatch bus");
 
@@ -469,7 +469,7 @@ where
         ctx: Ctx
     ) -> Result<Self, Error>
     where
-        SessionDisp: 'static + SessionDispatch<Types> + Send {
+        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
         info!(target: "dispatch-datagram-bus",
               "creating dispatch bus");
 

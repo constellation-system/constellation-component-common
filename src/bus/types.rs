@@ -839,22 +839,20 @@ where
 }
 
 pub trait SessionDispatchTypes {
+    type SessionPrin: Display + Send + Sync;
+    type Msgs: Send;
+    type Recv: Send;
+}
+
+pub trait DispatchDatagramBusTypes<Ctx>
+where
+    Ctx: 'static + NSNameCachesCtx + Send {
     type InMsg: Send;
     type OutMsg: Clone + Send;
+    type Wrapper;
     type MsgPrin: Clone + Display + Eq + Hash;
     type SessionPrin: Display + Send + Sync;
     type AuthNMsg: AuthNed<Self::MsgPrin>;
-    type Msgs: PrivateMsgs<Self::OutMsg> + Send;
-    type RecvError: Debug + Display + ScopedError;
-    type Recv: 'static
-        + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg, RecvError = Self::RecvError>
-        + Send;
-}
-
-pub trait DispatchDatagramBusTypes<Ctx>: SessionDispatchTypes
-where
-    Ctx: 'static + NSNameCachesCtx + Send {
-    type Wrapper;
     type SessionAuth: CreateWithParam<bool, Config = Self::SessionAuthConfig>
         + SessionAuthN<
             CompoundFlow<Self::Unix, Self::UDP>,
@@ -1003,11 +1001,26 @@ where
             Config = Self::ResolverConfig
         >;
     type ResolverConfig: Clone + Default + Send;
+    type Msgs: PrivateMsgs<Self::OutMsg> + Send;
+    type RecvError: Debug + Display + ScopedError;
+    type Recv: 'static
+        + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg, RecvError = Self::RecvError>
+        + Send;
+    type DispTypes: SessionDispatchTypes<
+            SessionPrin = Self::SessionPrin,
+            Msgs = Self::Msgs,
+            Recv = Self::Recv
+        >;
 }
 
-pub trait DispatchLargeObjBusTypes<Ctx>: SessionDispatchTypes
+pub trait DispatchLargeObjBusTypes<Ctx>
 where
     Ctx: 'static + NSNameCachesCtx + Send {
+    type InMsg: Send;
+    type OutMsg: Clone + Send;
+    type MsgPrin: Clone + Display + Eq + Hash;
+    type SessionPrin: Display + Send + Sync;
+    type AuthNMsg: AuthNed<Self::MsgPrin>;
     type Wrapper;
     type Hash: Clone
         + Default
@@ -1201,6 +1214,16 @@ where
             Config = Self::ResolverConfig
         >;
     type ResolverConfig: Clone + Default + Send;
+    type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + Send;
+    type RecvError: Debug + Display + ScopedError;
+    type Recv: 'static
+        + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg, RecvError = Self::RecvError>
+        + Send;
+    type DispTypes: SessionDispatchTypes<
+            SessionPrin = Self::SessionPrin,
+            Msgs = Self::Msgs,
+            Recv = Self::Recv
+        >;
     type LargeObjTypes: LargeObjProtoTypes<
             Self::InMsg,
             Self::OutMsg,
