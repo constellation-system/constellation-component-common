@@ -28,10 +28,8 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use constellation_auth::authn::AuthNMsgRecv;
-use constellation_auth::authn::AuthNTypes;
 use constellation_auth::authn::AuthNedDestruct;
 use constellation_auth::authn::BasicAuthNed;
-use constellation_auth::authn::MsgAuthNTypes;
 use constellation_auth::authn::PassthruMsgAuthN;
 use constellation_auth::authn::basic::BasicAuthN;
 use constellation_auth::config::BasicAuthNConfig;
@@ -45,7 +43,6 @@ use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_channels::resolve::cache::SharedNSNameCaches;
 use constellation_common::codec::Encoder;
 use constellation_common::codec::test::TestBytesCodec;
-use constellation_common::codec::test::TestDecodeError;
 use constellation_common::codec::test::TooShort;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
@@ -68,7 +65,6 @@ use constellation_streams::large_obj::LargeObjID;
 use constellation_streams::large_obj::LargeObjMsg;
 use constellation_streams::large_obj::LargeObjMsgs;
 use constellation_streams::large_obj::LargeObjProtoAddOutboundError;
-use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::large_obj::LargeObjSender;
 use constellation_streams::threads::Tokens;
 use constellation_streams::threads::TokensCtx;
@@ -107,9 +103,6 @@ enum LargeObjMsgsErr<Encode> {
     },
     Finished
 }
-
-struct LargeObjExample;
-struct ExampleAuthN;
 
 impl LargeObjMsgs<SHA3Algo, Vec<u8>> for ExampleMsgs {
     type AddMsgsError<Encode>
@@ -260,52 +253,6 @@ impl TokensCtx for ExampleCtx {
     }
 }
 
-impl MsgAuthNTypes<Vec<u8>> for ExampleAuthN {
-    type AuthNError = Infallible;
-    type DecodeError = TestDecodeError;
-    type Decoder = TestBytesCodec;
-    type DecoderConfig = ();
-    type MsgAuthN = PassthruMsgAuthN<Vec<u8>, String>;
-    type Prin = String;
-    type SessionPrin = String;
-    type Wrapper = Vec<u8>;
-}
-
-impl
-    AuthNTypes<
-        CompoundFlow<
-            PassthruDatagramXfrm<UnixSocketPath>,
-            PassthruDatagramXfrm<SocketAddr>
-        >,
-        Vec<u8>
-    > for ExampleAuthN
-{
-    type MsgAuthNTypes = ExampleAuthN;
-    type SessionAuthN = BasicAuthN<String>;
-}
-
-impl LargeObjProtoTypes<Vec<u8>, Vec<u8>> for LargeObjExample {
-    type AuthNError = Infallible;
-    type AuthNMsg = BasicAuthNed<String, Vec<u8>>;
-    type AuthNTypes = ExampleAuthN;
-    type DecodeError = TestDecodeError;
-    type Decoder = TestBytesCodec;
-    type DecoderConfig = ();
-    type EncodeError = TooShort;
-    type Encoder = TestBytesCodec;
-    type EncoderConfig = ();
-    type Hash = SHA3Algo;
-    type HashID = SHA3ID;
-    type IDs = AscendingCount<LargeObjID>;
-    type IDsConfig = ();
-    type MsgAuthN = PassthruMsgAuthN<Vec<u8>, String>;
-    type Msgs = ExampleMsgs;
-    type Prin = String;
-    type Recv = ExampleRecv;
-    type SessionPrin = String;
-    type Wrapper = Vec<u8>;
-}
-
 impl SessionDispatchTypes for ExampleDispTypes {
     type Msgs = ExampleMsgs;
     type Recv = ExampleRecv;
@@ -351,7 +298,6 @@ impl DispatchLargeObjBusTypes<ExampleCtx> for ExampleTypes {
     type LargeObjMsgAuth = PassthruMsgAuthN<LargeObjMsg<SHA3ID>, String>;
     type LargeObjMsgAuthConfig = ();
     type LargeObjMsgAuthCreateError = Infallible;
-    type LargeObjTypes = LargeObjExample;
     type LargeObjWrapper = LargeObjMsg<SHA3ID>;
     type MsgAuth = PassthruMsgAuthN<Vec<u8>, String>;
     type MsgAuthConfig = ();

@@ -25,10 +25,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
+use constellation_auth::authn::MsgAuthNTypes;
 use constellation_channels::far::channels::CompoundFarChannels;
 use constellation_channels::far::types::CompoundFarChannelsDatagramDispatchTypes;
 use constellation_channels::far::types::CompoundFarChannelsLargeObjDispatchTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
+use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
 use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
@@ -41,6 +43,7 @@ use constellation_streams::large_obj::LargeObjMsg;
 use constellation_streams::large_obj::LargeObjMsgCodec;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::select::dispatch::DispatchSelector;
 use constellation_streams::select::dispatch::DispatchSelectorCreateError;
 use constellation_streams::threads::dispatch::Dispatch;
@@ -152,6 +155,22 @@ where
     join_handle: JoinHandle<()>
 }
 
+struct BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct BusLargeObjTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
 struct DatagramDispatcher<Types, SessionDisp, Ctx>
 where
     SessionDisp: SessionDispatch<Types::DispTypes>,
@@ -177,6 +196,48 @@ where
     proto_auth_config: Types::LargeObjMsgAuthConfig,
     msg_auth_config: Types::MsgAuthConfig,
     hash_config: Types::HashConfig
+}
+
+impl<Types, Ctx> MsgAuthNTypes<Types::InMsg> for BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Prin = Types::MsgPrin;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> LargeObjProtoTypes<Types::InMsg, Types::OutMsg>
+    for BusLargeObjTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type AuthNMsg = Types::AuthNMsg;
+    type AuthNTypes = BusMsgAuthNTypes<Types, Ctx>;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type EncodeError = Types::EncodeError;
+    type Encoder = Types::Encoder;
+    type EncoderConfig = Types::EncoderConfig;
+    type Hash = Types::Hash;
+    type HashID = Types::HashID;
+    type IDs = Types::IDs;
+    type IDsConfig = Types::IDsConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Msgs = Types::Msgs;
+    type Prin = Types::MsgPrin;
+    type Recv = Types::Recv;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
 }
 
 impl<Types, SessionDisp, Ctx>
@@ -280,7 +341,7 @@ impl<Types, SessionDisp, Ctx>
             Types::UDP,
             Types::Epochs,
             Types::Resolver,
-            Types::LargeObjTypes,
+            BusLargeObjTypes<Types, Ctx>,
             Ctx
         >,
         Ctx
@@ -335,7 +396,7 @@ where
                 Types::UDP,
                 Types::Epochs,
                 Types::Resolver,
-                Types::LargeObjTypes,
+                BusLargeObjTypes<Types, Ctx>,
                 Ctx
             >,
             Ctx
@@ -502,7 +563,7 @@ where
                 Types::UDP,
                 Types::Epochs,
                 Types::Resolver,
-                Types::LargeObjTypes,
+                BusLargeObjTypes<Types, Ctx>,
                 Ctx
             >,
             _,

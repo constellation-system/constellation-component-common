@@ -37,6 +37,7 @@ use constellation_common::hashid::HashID;
 use constellation_common::version::Version;
 use uuid::Uuid;
 
+use crate::config::XactBatchCodecConfig;
 use crate::generated::xact::XactBatchHeader;
 use crate::generated::xact::XactCommittedReqHeader;
 use crate::generated::xact::XactCommittedRoundHeader;
@@ -4698,23 +4699,23 @@ where
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
     PayloadCodec: Create,
-    PayloadCodec::Config: Clone,
+    PayloadCodec::Config: Clone + Default,
     EffectCodec: Create,
-    EffectCodec::Config: Clone,
+    EffectCodec::Config: Clone + Default,
     SealCodec: Create,
-    SealCodec::Config: Clone,
+    SealCodec::Config: Clone + Default,
     ResCodec: Create,
-    ResCodec::Config: Clone,
+    ResCodec::Config: Clone + Default,
     ErrCodec: Create,
-    ErrCodec::Config: Clone
+    ErrCodec::Config: Clone + Default
 {
-    type Config = (
+    type Config = XactBatchCodecConfig<
         SealCodec::Config,
         PayloadCodec::Config,
         EffectCodec::Config,
         ResCodec::Config,
         ErrCodec::Config
-    );
+    >;
     type CreateError = XactBatchCodecCreateError<
         XactSealedCodecCreateError<
             SealCodec::CreateError,
@@ -4737,7 +4738,7 @@ where
     >;
 
     fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
-        let (seal, payload, effect, res, err) = param;
+        let (seal, payload, effect, res, err) = param.take();
         let req_codec = XactSealedCodec::create((
             seal.clone(),
             (payload.clone(), effect.clone())
@@ -9120,6 +9121,7 @@ fn test_notify_error_info_internal_blob() {
 
 #[test]
 fn test_batch() {
+    let config = XactBatchCodecConfig::new((), (), (), (), ());
     let mut codec: XactBatchCodec<
         _,
         SHA3Algo,
@@ -9133,7 +9135,7 @@ fn test_batch() {
         TestEffectsCodec,
         TestPayloadCodec,
         TestPayloadCodec
-    > = XactBatchCodec::create(((), (), (), (), ())).expect("Expected success");
+    > = XactBatchCodec::create(config).expect("Expected success");
     let uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, TEST_SERVICE_NAME.as_bytes());
     let effects_header: XactEffects<u128, _> = XactEffects::Effects {
         effects: TestEffects {

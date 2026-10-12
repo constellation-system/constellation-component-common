@@ -31,6 +31,31 @@ use constellation_streams::config::SharedLargeObjModeConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
+#[derive(
+    Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename = "xact-batch-codec")]
+#[serde(rename_all = "kebab-case")]
+#[serde(default)]
+pub struct XactBatchCodecConfig<Seal, Payload, Effect, Res, Err>
+where
+    Seal: Default,
+    Payload: Default,
+    Effect: Default,
+    Res: Default,
+    Err: Default {
+    #[serde(default)]
+    seal_codec: Seal,
+    #[serde(default)]
+    payload_codec: Payload,
+    #[serde(default)]
+    effect_codec: Effect,
+    #[serde(default)]
+    res_codec: Res,
+    #[serde(default)]
+    err_codec: Err
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "unicast-datagram-bus")]
 #[serde(rename_all = "kebab-case")]
@@ -310,6 +335,44 @@ where
     Static {
         #[serde(rename = "static")]
         stat: Vec<StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>>
+    }
+}
+
+impl<Seal, Payload, Effect, Res, Err>
+    XactBatchCodecConfig<Seal, Payload, Effect, Res, Err>
+where
+    Seal: Default,
+    Payload: Default,
+    Effect: Default,
+    Res: Default,
+    Err: Default
+{
+    #[inline]
+    pub fn new(
+        seal_codec: Seal,
+        payload_codec: Payload,
+        effect_codec: Effect,
+        res_codec: Res,
+        err_codec: Err
+    ) -> Self {
+        XactBatchCodecConfig {
+            seal_codec: seal_codec,
+            payload_codec: payload_codec,
+            effect_codec: effect_codec,
+            res_codec: res_codec,
+            err_codec: err_codec
+        }
+    }
+
+    #[inline]
+    pub fn take(self) -> (Seal, Payload, Effect, Res, Err) {
+        (
+            self.seal_codec,
+            self.payload_codec,
+            self.effect_codec,
+            self.res_codec,
+            self.err_codec
+        )
     }
 }
 

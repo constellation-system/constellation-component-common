@@ -61,7 +61,6 @@ use constellation_streams::large_obj::LargeObjMsg;
 use constellation_streams::large_obj::LargeObjMsgCodec;
 use constellation_streams::large_obj::LargeObjMsgEncodeError;
 use constellation_streams::large_obj::LargeObjMsgs;
-use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::multicast::MulticastStreamIdx;
 use constellation_streams::stream::LargeObjOfferStream;
 use constellation_streams::stream::PullStream;
@@ -239,7 +238,8 @@ where
     type Wrapper;
     type MsgPrin: Clone + Debug + Display + Eq + Hash;
     type SessionPrin: Clone + Debug + Display + Eq + Hash + Send + Sync;
-    type AuthNMsg: AuthNed<Self::MsgPrin>;
+    type AuthNMsg: AuthNed<Self::MsgPrin>
+        + AuthNedDestruct<Self::MsgPrin, Self::InMsg>;
     type Hash: Clone
         + Default
         + Create<Config = Self::HashConfig, CreateError = Self::HashCreateError>
@@ -370,7 +370,8 @@ where
     type MsgAuthError: Debug + Display + ScopedError;
     type MsgAuthConfig: Send;
     type MsgAuthCreateError: Debug + Display;
-    type Encoder: Create<
+    type Encoder: Clone
+        + Create<
             Config = Self::EncoderConfig,
             CreateError = Self::EncoderCreateError
         > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
@@ -431,27 +432,6 @@ where
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsWaker + Send;
-    type LargeObjTypes: LargeObjProtoTypes<
-            Self::InMsg,
-            Self::OutMsg,
-            Prin = Self::MsgPrin,
-            SessionPrin = Self::SessionPrin,
-            IDsConfig = Self::IDsConfig,
-            IDs = Self::IDs,
-            HashID = Self::HashID,
-            Hash = Self::Hash,
-            Wrapper = Self::Wrapper,
-            DecoderConfig = Self::DecoderConfig,
-            Decoder = Self::Decoder,
-            EncoderConfig = Self::EncoderConfig,
-            Encoder = Self::Encoder,
-            EncodeError = Self::EncodeError,
-            Msgs = Self::Msgs,
-            Recv = Self::Recv,
-            AuthNMsg = Self::AuthNMsg,
-            MsgAuthN = Self::MsgAuth,
-            AuthNError = Self::MsgAuthError
-        >;
 }
 
 pub trait MulticastDatagramBusTypes<Ctx>
@@ -621,7 +601,8 @@ where
     type Wrapper;
     type MsgPrin: Clone + Debug + Display + Eq + Hash;
     type SessionPrin: Clone + Debug + Display + Eq + Hash + Send + Sync;
-    type AuthNMsg: AuthNed<Self::MsgPrin>;
+    type AuthNMsg: AuthNed<Self::MsgPrin>
+        + AuthNedDestruct<Self::MsgPrin, Self::InMsg>;
     type Hash: Clone
         + Default
         + Create<Config = Self::HashConfig, CreateError = Self::HashCreateError>
@@ -754,7 +735,8 @@ where
     type MsgAuthError: Debug + Display + ScopedError;
     type MsgAuthConfig: Send;
     type MsgAuthCreateError: Debug + Display;
-    type Encoder: Create<
+    type Encoder: Clone
+        + Create<
             Config = Self::EncoderConfig,
             CreateError = Self::EncoderCreateError
         > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
@@ -815,27 +797,6 @@ where
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
     type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsWaker + Send;
-    type LargeObjTypes: LargeObjProtoTypes<
-            Self::InMsg,
-            Self::OutMsg,
-            Prin = Self::MsgPrin,
-            SessionPrin = Self::SessionPrin,
-            IDsConfig = Self::IDsConfig,
-            IDs = Self::IDs,
-            HashID = Self::HashID,
-            Hash = Self::Hash,
-            Wrapper = Self::Wrapper,
-            DecoderConfig = Self::DecoderConfig,
-            Decoder = Self::Decoder,
-            EncoderConfig = Self::EncoderConfig,
-            Encoder = Self::Encoder,
-            EncodeError = Self::EncodeError,
-            Msgs = Self::Msgs,
-            Recv = Self::Recv,
-            AuthNMsg = Self::AuthNMsg,
-            MsgAuthN = Self::MsgAuth,
-            AuthNError = Self::MsgAuthError
-        > + Send;
 }
 
 pub trait SessionDispatchTypes {
@@ -1018,9 +979,10 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     type InMsg: Send;
     type OutMsg: Clone + Send;
-    type MsgPrin: Clone + Display + Eq + Hash;
-    type SessionPrin: Display + Send + Sync;
-    type AuthNMsg: AuthNed<Self::MsgPrin>;
+    type MsgPrin: Clone + Debug + Display + Eq + Hash;
+    type SessionPrin: Clone + Debug + Display + Eq + Hash + Send + Sync;
+    type AuthNMsg: AuthNed<Self::MsgPrin>
+        + AuthNedDestruct<Self::MsgPrin, Self::InMsg>;
     type Wrapper;
     type Hash: Clone
         + Default
@@ -1153,7 +1115,8 @@ where
     type MsgAuthError: Debug + Display + ScopedError;
     type MsgAuthConfig: Clone + Send;
     type MsgAuthCreateError: Debug + Display + ScopedError;
-    type Encoder: Create<
+    type Encoder: Clone
+        + Create<
             Config = Self::EncoderConfig,
             CreateError = Self::EncoderCreateError
         > + Encoder<Self::OutMsg, EncodeError = Self::EncodeError>
@@ -1217,32 +1180,12 @@ where
     type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + Send;
     type RecvError: Debug + Display + ScopedError;
     type Recv: 'static
+        + Clone
         + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg, RecvError = Self::RecvError>
         + Send;
     type DispTypes: SessionDispatchTypes<
             SessionPrin = Self::SessionPrin,
             Msgs = Self::Msgs,
             Recv = Self::Recv
-        >;
-    type LargeObjTypes: LargeObjProtoTypes<
-            Self::InMsg,
-            Self::OutMsg,
-            Prin = Self::MsgPrin,
-            SessionPrin = Self::SessionPrin,
-            IDsConfig = Self::IDsConfig,
-            IDs = Self::IDs,
-            HashID = Self::HashID,
-            Hash = Self::Hash,
-            Wrapper = Self::Wrapper,
-            DecoderConfig = Self::DecoderConfig,
-            Decoder = Self::Decoder,
-            EncoderConfig = Self::EncoderConfig,
-            Encoder = Self::Encoder,
-            EncodeError = Self::EncodeError,
-            Msgs = Self::Msgs,
-            Recv = Self::Recv,
-            AuthNMsg = Self::AuthNMsg,
-            MsgAuthN = Self::MsgAuth,
-            AuthNError = Self::MsgAuthError
         >;
 }

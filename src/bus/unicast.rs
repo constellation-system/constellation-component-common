@@ -19,19 +19,23 @@
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::io::Error;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
+use constellation_auth::authn::MsgAuthNTypes;
 use constellation_channels::far::types::CompoundFarChannelsDatagramSelectorPollTypes;
 use constellation_channels::far::types::CompoundFarChannelsLargeObjSelectorPollTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
+use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
+use constellation_common::shutdown::ShutdownFlag;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::threads::poll::PollThread;
+use constellation_streams::threads::poll::PollThreadStartError;
 use log::debug;
 use log::error;
 use log::info;
@@ -47,7 +51,8 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    poll_join: JoinHandle<()>
+    poll_join: JoinHandle<()>,
+    shutdown: ShutdownFlag
 }
 
 pub struct UnicastLargeObjBus<Types, Ctx>
@@ -56,15 +61,74 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    poll_join: JoinHandle<()>
+    poll_join: JoinHandle<()>,
+    shutdown: ShutdownFlag
+}
+
+struct BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct BusLargeObjTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
 }
 
 #[derive(Debug)]
 pub enum UnicastLargeObjBusCreateError<Hash, Auth, Proto> {
     Hash { err: Hash },
-    IO { err: Error },
+    Start { err: PollThreadStartError },
     Auth { err: Auth },
     Proto { err: Proto }
+}
+
+impl<Types, Ctx> MsgAuthNTypes<Types::InMsg> for BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Prin = Types::MsgPrin;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> LargeObjProtoTypes<Types::InMsg, Types::OutMsg>
+    for BusLargeObjTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type AuthNMsg = Types::AuthNMsg;
+    type AuthNTypes = BusMsgAuthNTypes<Types, Ctx>;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type EncodeError = Types::EncodeError;
+    type Encoder = Types::Encoder;
+    type EncoderConfig = Types::EncoderConfig;
+    type Hash = Types::Hash;
+    type HashID = Types::HashID;
+    type IDs = Types::IDs;
+    type IDsConfig = Types::IDsConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Msgs = Types::Msgs;
+    type Prin = Types::MsgPrin;
+    type Recv = Types::Recv;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
 }
 
 impl<Types, Ctx> UnicastDatagramBus<Types, Ctx>
@@ -86,40 +150,53 @@ where
         ctx: Ctx,
         recv: Types::Recv,
         msgs: Types::Msgs
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PollThreadStartError> {
         info!(target: "unicast-datagram-bus",
               "creating unicast datagram bus");
 
         let poll_config = config.take();
-        let poll_join = PollThread::<
-            Ctx,
-            CompoundFarChannelsDatagramSelectorPollTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::Wrapper,
-                Types::Encoder,
-                Types::Decoder,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::MsgAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                Types::Msgs,
-                Types::Recv,
-                Ctx
-            >
-        >::start(poll_config, None, ctx, recv, msgs)?;
+        let (poll_join, shutdown) =
+            PollThread::<
+                Ctx,
+                CompoundFarChannelsDatagramSelectorPollTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::Wrapper,
+                    Types::Encoder,
+                    Types::Decoder,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::MsgAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    Types::Msgs,
+                    Types::Recv,
+                    Ctx
+                >
+            >::start(poll_config, None, ctx, recv, msgs)?;
 
         Ok(UnicastDatagramBus {
             types: PhantomData,
             ctx: PhantomData,
+            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    pub fn cleanup(self) {
+    #[inline]
+    pub fn shutdown_flag(&self) -> ShutdownFlag {
+        self.shutdown.clone()
+    }
+
+    pub fn cleanup(mut self) {
+        if let Err(err) = self.shutdown.set() {
+            error!(target: "unicast-datagram-bus-cleanup",
+                   "error setting shutdown flag: {}",
+                   err)
+        }
+
         debug!(target: "unicast-datagram-bus-cleanup",
                "joining poll thread");
 
@@ -179,35 +256,43 @@ where
                     err: err
                 })?;
         let large_obj = Arc::new(Mutex::new(large_obj));
-        let poll_join = PollThread::<
-            Ctx,
-            CompoundFarChannelsLargeObjSelectorPollTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::LargeObjWrapper,
-                Types::LargeObjMsgAuth,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                Types::LargeObjTypes,
-                Ctx
-            >
-        >::start(
-            poll_config, None, ctx, large_obj.clone(), large_obj
-        )
-        .map_err(|err| UnicastLargeObjBusCreateError::IO { err: err })?;
+        let (poll_join, shutdown) =
+            PollThread::<
+                Ctx,
+                CompoundFarChannelsLargeObjSelectorPollTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::LargeObjWrapper,
+                    Types::LargeObjMsgAuth,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    BusLargeObjTypes<Types, Ctx>,
+                    Ctx
+                >
+            >::start(
+                poll_config, None, ctx, large_obj.clone(), large_obj
+            )
+            .map_err(|err| UnicastLargeObjBusCreateError::Start { err: err })?;
 
         Ok(UnicastLargeObjBus {
             types: PhantomData,
             ctx: PhantomData,
+            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    pub fn cleanup(self) {
+    pub fn cleanup(mut self) {
+        if let Err(err) = self.shutdown.set() {
+            error!(target: "unicast-large-obj-bus-cleanup",
+                   "error setting shutdown flag: {}",
+                   err)
+        }
+
         debug!(target: "unicast-large-obj-bus-cleanup",
                "joining poll thread");
 
@@ -233,7 +318,7 @@ where
             UnicastLargeObjBusCreateError::Proto { err } => err.fmt(f),
             UnicastLargeObjBusCreateError::Auth { err } => err.fmt(f),
             UnicastLargeObjBusCreateError::Hash { err } => err.fmt(f),
-            UnicastLargeObjBusCreateError::IO { err } => write!(f, "{}", err)
+            UnicastLargeObjBusCreateError::Start { err } => write!(f, "{}", err)
         }
     }
 }

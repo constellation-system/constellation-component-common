@@ -19,22 +19,26 @@
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::io::Error;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
+use constellation_auth::authn::MsgAuthNTypes;
 use constellation_channels::far::types::CompoundFarChannelsDatagramMulticastPollTypes;
 use constellation_channels::far::types::CompoundFarChannelsLargeObjMulticastPollTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
+use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
 use constellation_common::error::MutexPoison;
 use constellation_common::retry::Retry;
+use constellation_common::shutdown::ShutdownFlag;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::multicast::MulticastStreamIdx;
 use constellation_streams::threads::poll::PollThread;
+use constellation_streams::threads::poll::PollThreadStartError;
 use log::debug;
 use log::error;
 use log::info;
@@ -50,6 +54,7 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
+    shutdown: ShutdownFlag,
     poll_join: JoinHandle<()>
 }
 
@@ -59,16 +64,75 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
+    shutdown: ShutdownFlag,
     poll_join: JoinHandle<()>
+}
+
+struct BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: MulticastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct BusLargeObjTypes<Types, Ctx>
+where
+    Types: MulticastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
 }
 
 #[derive(Debug)]
 pub enum MulticastLargeObjBusCreateError<Hash, Auth, Proto, Parties> {
     Hash { err: Hash },
-    IO { err: Error },
+    Start { err: PollThreadStartError },
     Auth { err: Auth },
     Proto { err: Proto },
     Parties { err: Parties }
+}
+
+impl<Types, Ctx> MsgAuthNTypes<Types::InMsg> for BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: MulticastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Prin = Types::MsgPrin;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> LargeObjProtoTypes<Types::InMsg, Types::OutMsg>
+    for BusLargeObjTypes<Types, Ctx>
+where
+    Types: MulticastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type AuthNMsg = Types::AuthNMsg;
+    type AuthNTypes = BusMsgAuthNTypes<Types, Ctx>;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type EncodeError = Types::EncodeError;
+    type Encoder = Types::Encoder;
+    type EncoderConfig = Types::EncoderConfig;
+    type Hash = Types::Hash;
+    type HashID = Types::HashID;
+    type IDs = Types::IDs;
+    type IDsConfig = Types::IDsConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Msgs = Types::Msgs;
+    type Prin = Types::MsgPrin;
+    type Recv = Types::Recv;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
 }
 
 impl<Types, Ctx> MulticastDatagramBus<Types, Ctx>
@@ -91,12 +155,12 @@ where
         ctx: Ctx,
         recv: Types::Recv,
         msgs: Types::Msgs
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PollThreadStartError> {
         info!(target: "multicast-datagram-bus",
               "creating multicast datagram bus");
 
         let (poll_config, self_party) = config.take();
-        let poll_join =
+        let (poll_join, shutdown) =
             PollThread::<
                 Ctx,
                 CompoundFarChannelsDatagramMulticastPollTypes<
@@ -121,11 +185,23 @@ where
         Ok(MulticastDatagramBus {
             types: PhantomData,
             ctx: PhantomData,
+            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    pub fn cleanup(self) {
+    #[inline]
+    pub fn shutdown_flag(&self) -> ShutdownFlag {
+        self.shutdown.clone()
+    }
+
+    pub fn cleanup(mut self) {
+        if let Err(err) = self.shutdown.set() {
+            error!(target: "multicast-datagram-bus-cleanup",
+                   "error setting shutdown flag: {}",
+                   err)
+        }
+
         debug!(target: "multicast-datagram-bus-cleanup",
                "joining poll thread");
 
@@ -138,7 +214,7 @@ where
 
 impl<Types, Ctx> MulticastLargeObjBus<Types, Ctx>
 where
-    Types: 'static + MulticastLargeObjBusTypes<Ctx>,
+    Types: 'static + MulticastLargeObjBusTypes<Ctx> + Send,
     Ctx: 'static + NSNameCachesCtx + Send
 {
     pub fn start(
@@ -160,7 +236,7 @@ where
         recv: Types::Recv,
         msgs: Types::Msgs
     ) -> Result<
-        Self,
+        (Self, Vec<(MulticastStreamIdx, Types::SessionPrin)>),
         MulticastLargeObjBusCreateError<
             Types::HashCreateError,
             Types::MsgAuthCreateError,
@@ -197,35 +273,31 @@ where
 
         // XXX this is a hacky and wrong way to set parties; it should
         // be done in the manager thread.
-        let nparties = poll_config
-            .stream()
-            .parties()
-            .iter()
-            .filter(|ent| {
-                self_party
-                    .as_ref()
-                    .is_none_or(|self_party| self_party != ent.party())
-            })
-            .count();
-        let parties = poll_config
-            .stream()
-            .parties()
-            .iter()
-            .filter(|ent| {
-                self_party
-                    .as_ref()
-                    .is_none_or(|self_party| self_party != ent.party())
-            })
-            .enumerate()
-            .map(|(i, ent)| (MulticastStreamIdx::from(i), ent.party().clone()));
-        let params = vec![Retry::default(); nparties];
+        let parties: Vec<(MulticastStreamIdx, Types::SessionPrin)> =
+            poll_config
+                .stream()
+                .parties()
+                .iter()
+                .filter(|ent| {
+                    self_party
+                        .as_ref()
+                        .is_none_or(|self_party| self_party != ent.party())
+                })
+                .enumerate()
+                .map(|(i, ent)| {
+                    (MulticastStreamIdx::from(i), ent.party().clone())
+                })
+                .collect();
+        let params = vec![Retry::default(); parties.len()];
 
-        large_obj.set_parties(params, parties).map_err(|err| {
-            MulticastLargeObjBusCreateError::Parties { err: err }
-        })?;
+        large_obj
+            .set_parties(params, parties.iter().cloned())
+            .map_err(|err| MulticastLargeObjBusCreateError::Parties {
+                err: err
+            })?;
 
         let large_obj = Arc::new(Mutex::new(large_obj));
-        let poll_join = PollThread::<
+        let (poll_join, shutdown) = PollThread::<
             Ctx,
             CompoundFarChannelsLargeObjMulticastPollTypes<
                 Types::InMsg,
@@ -238,7 +310,7 @@ where
                 Types::UDP,
                 Types::Epochs,
                 Types::Resolver,
-                Types::LargeObjTypes,
+                BusLargeObjTypes<Types, Ctx>,
                 Ctx
             >
         >::start(
@@ -248,16 +320,26 @@ where
             large_obj.clone(),
             large_obj
         )
-        .map_err(|err| MulticastLargeObjBusCreateError::IO { err: err })?;
+        .map_err(|err| MulticastLargeObjBusCreateError::Start { err: err })?;
 
-        Ok(MulticastLargeObjBus {
-            types: PhantomData,
-            ctx: PhantomData,
-            poll_join: poll_join
-        })
+        Ok((
+            MulticastLargeObjBus {
+                types: PhantomData,
+                ctx: PhantomData,
+                shutdown: shutdown,
+                poll_join: poll_join
+            },
+            parties
+        ))
     }
 
-    pub fn cleanup(self) {
+    pub fn cleanup(mut self) {
+        if let Err(err) = self.shutdown.set() {
+            error!(target: "multicast-large-obj-bus-cleanup",
+                   "error setting shutdown flag: {}",
+                   err)
+        }
+
         debug!(target: "multicast-large-obj-bus-cleanup",
                "joining poll thread");
 
@@ -285,7 +367,9 @@ where
             MulticastLargeObjBusCreateError::Proto { err } => err.fmt(f),
             MulticastLargeObjBusCreateError::Auth { err } => err.fmt(f),
             MulticastLargeObjBusCreateError::Hash { err } => err.fmt(f),
-            MulticastLargeObjBusCreateError::IO { err } => write!(f, "{}", err)
+            MulticastLargeObjBusCreateError::Start { err } => {
+                write!(f, "{}", err)
+            }
         }
     }
 }
