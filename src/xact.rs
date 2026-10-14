@@ -544,7 +544,7 @@ pub struct XactBatchCodec<
 }
 
 #[derive(Clone)]
-pub struct XactBatchHashCodec<
+pub struct XactHashBatchCodec<
     RoundID,
     H,
     Seal,
@@ -5051,7 +5051,7 @@ impl<
     ResCodec,
     ErrCodec
 >
-    XactBatchHashCodec<
+    XactHashBatchCodec<
         RoundID,
         H,
         Seal,
@@ -5130,7 +5130,7 @@ impl<
     ResCodec,
     ErrCodec
 > Create
-    for XactBatchHashCodec<
+    for XactHashBatchCodec<
         RoundID,
         H,
         Seal,
@@ -5149,23 +5149,23 @@ where
     H::HashID: Clone,
     RoundID: Clone + From<u128> + Into<u128>,
     PayloadCodec: Create,
-    PayloadCodec::Config: Clone,
+    PayloadCodec::Config: Clone + Default,
     EffectCodec: Create,
-    EffectCodec::Config: Clone,
+    EffectCodec::Config: Clone + Default,
     SealCodec: Create,
-    SealCodec::Config: Clone,
+    SealCodec::Config: Clone + Default,
     ResCodec: Create,
-    ResCodec::Config: Clone,
+    ResCodec::Config: Clone + Default,
     ErrCodec: Create,
-    ErrCodec::Config: Clone
+    ErrCodec::Config: Clone + Default
 {
-    type Config = (
+    type Config = XactBatchCodecConfig<
         SealCodec::Config,
         PayloadCodec::Config,
         EffectCodec::Config,
         ResCodec::Config,
         ErrCodec::Config
-    );
+    >;
     type CreateError = XactBatchCodecCreateError<
         XactSealedCodecCreateError<
             SealCodec::CreateError,
@@ -5188,7 +5188,7 @@ where
     >;
 
     fn create(param: Self::Config) -> Result<Self, Self::CreateError> {
-        let (seal, payload, effect, res, err) = param;
+        let (seal, payload, effect, res, err) = param.take();
         let req_codec = XactSealedCodec::create((
             seal.clone(),
             (payload.clone(), effect.clone())
@@ -5203,7 +5203,7 @@ where
         let res_codec = XactNotifyCodec::create((res.clone(), err.clone()))
             .map_err(|err| XactBatchCodecCreateError::Notify { err: err })?;
 
-        Ok(XactBatchHashCodec {
+        Ok(XactHashBatchCodec {
             header_codec: XactBatchHeaderPERCodec::default(),
             committed_codec: committed_codec,
             req_codec: req_codec,
@@ -5226,7 +5226,7 @@ impl<
     ResCodec,
     ErrCodec
 > Encoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
-    for XactBatchHashCodec<
+    for XactHashBatchCodec<
         RoundID,
         H,
         Seal,
@@ -5381,7 +5381,7 @@ impl<
     ResCodec,
     ErrCodec
 > Decoder<XactHashBatch<RoundID, H::HashID, Seal, Payload, Effect, Res, Err>>
-    for XactBatchHashCodec<
+    for XactHashBatchCodec<
         RoundID,
         H,
         Seal,
