@@ -164,7 +164,7 @@ pub struct MulticastDatagramBusConfig<
         MsgAuthN
     >,
     #[serde(rename = "self")]
-    #[serde(default)]
+    #[serde(default = "default_self_party")]
     self_party: Option<Party>
 }
 
@@ -213,7 +213,7 @@ pub struct MulticastLargeObjBusConfig<
     #[serde(default)]
     hash: Hash,
     #[serde(rename = "self")]
-    #[serde(default)]
+    #[serde(default = "default_self_party")]
     self_party: Option<Party>
 }
 
@@ -336,6 +336,10 @@ where
         #[serde(rename = "static")]
         stat: Vec<StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>>
     }
+}
+
+fn default_self_party<Party>() -> Option<Party> {
+    None
 }
 
 impl<Seal, Payload, Effect, Res, Err>
