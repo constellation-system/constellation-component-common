@@ -54,6 +54,8 @@ use crate::generated::xact::XactUncommittedEffectsHeader;
 use crate::generated::xact::XactUncommittedReqHeader;
 use crate::generated::xact::XactValueHeader;
 
+pub mod test;
+
 const XACT_UNCOMMITTED_REQ_HEADER_SIZE: usize = 55;
 const XACT_UNCOMMITTED_REQ_HEADER_BITS: usize =
     XACT_UNCOMMITTED_REQ_HEADER_SIZE * 8;
