@@ -177,6 +177,17 @@ pub type TestBatchCodecEncodeError = XactBatchCodecEncodeError<
 
 impl TestPayload {
     #[inline]
+    pub fn new(
+        effects: Vec<u8>,
+        res: Result<TestResult, TestError>
+    ) -> Self {
+        TestPayload {
+            effects: effects,
+            res: res
+        }
+    }
+
+    #[inline]
     pub fn take(self) -> (TestEffects, Result<TestResult, TestError>) {
         let effects = TestEffects {
             effects: self.effects
@@ -187,6 +198,11 @@ impl TestPayload {
 }
 
 impl TestEffects {
+    #[inline]
+    pub fn new(effects: Vec<u8>) -> Self {
+        TestEffects { effects: effects }
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty()
@@ -201,6 +217,20 @@ impl TestEffects {
         let sup: HashSet<u8> = other.effects.iter().cloned().collect();
 
         sub.is_subset(&sup)
+    }
+}
+
+impl TestResult {
+    #[inline]
+    pub fn new(val: Vec<u8>) -> Self {
+        TestResult { val: val }
+    }
+}
+
+impl TestError {
+    #[inline]
+    pub fn new(err: String) -> Self {
+        TestError { err: err }
     }
 }
 
