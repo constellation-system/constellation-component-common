@@ -51,8 +51,7 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    poll_join: JoinHandle<()>,
-    shutdown: ShutdownFlag
+    poll_join: JoinHandle<()>
 }
 
 pub struct UnicastLargeObjBus<Types, Ctx>
@@ -61,8 +60,7 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    poll_join: JoinHandle<()>,
-    shutdown: ShutdownFlag
+    poll_join: JoinHandle<()>
 }
 
 struct BusMsgAuthNTypes<Types, Ctx>
@@ -149,13 +147,14 @@ where
         >,
         ctx: Ctx,
         recv: Types::Recv,
-        msgs: Types::Msgs
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
     ) -> Result<Self, PollThreadStartError> {
         info!(target: "unicast-datagram-bus",
               "creating unicast datagram bus");
 
         let poll_config = config.take();
-        let (poll_join, shutdown) =
+        let poll_join =
             PollThread::<
                 Ctx,
                 CompoundFarChannelsDatagramSelectorPollTypes<
@@ -175,28 +174,16 @@ where
                     Types::Recv,
                     Ctx
                 >
-            >::start(poll_config, None, ctx, recv, msgs)?;
+            >::start(poll_config, None, ctx, recv, msgs, shutdown)?;
 
         Ok(UnicastDatagramBus {
             types: PhantomData,
             ctx: PhantomData,
-            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    #[inline]
-    pub fn shutdown_flag(&self) -> ShutdownFlag {
-        self.shutdown.clone()
-    }
-
-    pub fn cleanup(mut self) {
-        if let Err(err) = self.shutdown.set() {
-            error!(target: "unicast-datagram-bus-cleanup",
-                   "error setting shutdown flag: {}",
-                   err)
-        }
-
+    pub fn cleanup(self) {
         debug!(target: "unicast-datagram-bus-cleanup",
                "joining poll thread");
 
@@ -228,7 +215,8 @@ where
         >,
         ctx: Ctx,
         recv: Types::Recv,
-        msgs: Types::Msgs
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
     ) -> Result<
         Self,
         UnicastLargeObjBusCreateError<
@@ -256,43 +244,40 @@ where
                     err: err
                 })?;
         let large_obj = Arc::new(Mutex::new(large_obj));
-        let (poll_join, shutdown) =
-            PollThread::<
-                Ctx,
-                CompoundFarChannelsLargeObjSelectorPollTypes<
-                    Types::InMsg,
-                    Types::OutMsg,
-                    Types::LargeObjWrapper,
-                    Types::LargeObjMsgAuth,
-                    Types::AuthNChan,
-                    Types::SessionAuth,
-                    Types::Unix,
-                    Types::UDP,
-                    Types::Epochs,
-                    Types::Resolver,
-                    BusLargeObjTypes<Types, Ctx>,
-                    Ctx
-                >
-            >::start(
-                poll_config, None, ctx, large_obj.clone(), large_obj
-            )
-            .map_err(|err| UnicastLargeObjBusCreateError::Start { err: err })?;
+        let poll_join = PollThread::<
+            Ctx,
+            CompoundFarChannelsLargeObjSelectorPollTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::LargeObjWrapper,
+                Types::LargeObjMsgAuth,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                BusLargeObjTypes<Types, Ctx>,
+                Ctx
+            >
+        >::start(
+            poll_config,
+            None,
+            ctx,
+            large_obj.clone(),
+            large_obj,
+            shutdown
+        )
+        .map_err(|err| UnicastLargeObjBusCreateError::Start { err: err })?;
 
         Ok(UnicastLargeObjBus {
             types: PhantomData,
             ctx: PhantomData,
-            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    pub fn cleanup(mut self) {
-        if let Err(err) = self.shutdown.set() {
-            error!(target: "unicast-large-obj-bus-cleanup",
-                   "error setting shutdown flag: {}",
-                   err)
-        }
-
+    pub fn cleanup(self) {
         debug!(target: "unicast-large-obj-bus-cleanup",
                "joining poll thread");
 

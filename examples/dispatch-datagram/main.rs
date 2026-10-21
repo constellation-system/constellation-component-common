@@ -293,7 +293,8 @@ fn run(conf: &str) {
     let bus = DispatchDatagramBus::<ExampleTypes, ExampleCtx>::start(
         bus_config,
         ExampleDispatch,
-        ctx
+        ctx,
+        ShutdownFlag::new()
     )
     .unwrap();
 

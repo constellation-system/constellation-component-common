@@ -54,7 +54,6 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    shutdown: ShutdownFlag,
     poll_join: JoinHandle<()>
 }
 
@@ -64,7 +63,6 @@ where
     Ctx: 'static + NSNameCachesCtx + Send {
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    shutdown: ShutdownFlag,
     poll_join: JoinHandle<()>
 }
 
@@ -154,54 +152,44 @@ where
         >,
         ctx: Ctx,
         recv: Types::Recv,
-        msgs: Types::Msgs
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
     ) -> Result<Self, PollThreadStartError> {
         info!(target: "multicast-datagram-bus",
               "creating multicast datagram bus");
 
         let (poll_config, self_party) = config.take();
-        let (poll_join, shutdown) =
-            PollThread::<
-                Ctx,
-                CompoundFarChannelsDatagramMulticastPollTypes<
-                    Types::InMsg,
-                    Types::OutMsg,
-                    Types::Wrapper,
-                    Types::Encoder,
-                    Types::Decoder,
-                    Types::AuthNChan,
-                    Types::SessionAuth,
-                    Types::MsgAuth,
-                    Types::Unix,
-                    Types::UDP,
-                    Types::Epochs,
-                    Types::Resolver,
-                    Types::Msgs,
-                    Types::Recv,
-                    Ctx
-                >
-            >::start(poll_config, self_party, ctx, recv, msgs)?;
+        let poll_join = PollThread::<
+            Ctx,
+            CompoundFarChannelsDatagramMulticastPollTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
+            >
+        >::start(
+            poll_config, self_party, ctx, recv, msgs, shutdown
+        )?;
 
         Ok(MulticastDatagramBus {
             types: PhantomData,
             ctx: PhantomData,
-            shutdown: shutdown,
             poll_join: poll_join
         })
     }
 
-    #[inline]
-    pub fn shutdown_flag(&self) -> ShutdownFlag {
-        self.shutdown.clone()
-    }
-
-    pub fn cleanup(mut self) {
-        if let Err(err) = self.shutdown.set() {
-            error!(target: "multicast-datagram-bus-cleanup",
-                   "error setting shutdown flag: {}",
-                   err)
-        }
-
+    pub fn cleanup(self) {
         debug!(target: "multicast-datagram-bus-cleanup",
                "joining poll thread");
 
@@ -234,7 +222,8 @@ where
         >,
         ctx: Ctx,
         recv: Types::Recv,
-        msgs: Types::Msgs
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
     ) -> Result<
         (Self, Vec<(MulticastStreamIdx, Types::SessionPrin)>),
         MulticastLargeObjBusCreateError<
@@ -297,7 +286,7 @@ where
             })?;
 
         let large_obj = Arc::new(Mutex::new(large_obj));
-        let (poll_join, shutdown) = PollThread::<
+        let poll_join = PollThread::<
             Ctx,
             CompoundFarChannelsLargeObjMulticastPollTypes<
                 Types::InMsg,
@@ -318,7 +307,8 @@ where
             self_party,
             ctx,
             large_obj.clone(),
-            large_obj
+            large_obj,
+            shutdown
         )
         .map_err(|err| MulticastLargeObjBusCreateError::Start { err: err })?;
 
@@ -326,20 +316,13 @@ where
             MulticastLargeObjBus {
                 types: PhantomData,
                 ctx: PhantomData,
-                shutdown: shutdown,
                 poll_join: poll_join
             },
             parties
         ))
     }
 
-    pub fn cleanup(mut self) {
-        if let Err(err) = self.shutdown.set() {
-            error!(target: "multicast-large-obj-bus-cleanup",
-                   "error setting shutdown flag: {}",
-                   err)
-        }
-
+    pub fn cleanup(self) {
         debug!(target: "multicast-large-obj-bus-cleanup",
                "joining poll thread");
 

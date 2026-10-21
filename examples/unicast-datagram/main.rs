@@ -51,6 +51,7 @@ use constellation_common::net::PassthruDatagramXfrm;
 use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::net::PrivateMsgs;
 use constellation_common::retry::Retry;
+use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_common::unix::UnixSocketPath;
 use constellation_component_common::bus::types::UnicastDatagramBusTypes;
@@ -430,7 +431,11 @@ fn server(conf: &str) {
         tokens: Tokens::new()
     };
     let bus = UnicastDatagramBus::<ExampleServerBusTypes, ExampleCtx>::start(
-        bus_config, ctx, recv, msgs
+        bus_config,
+        ctx,
+        recv,
+        msgs,
+        ShutdownFlag::new()
     )
     .unwrap();
 
@@ -465,7 +470,11 @@ fn client(conf: &str) {
         tokens: Tokens::new()
     };
     let bus = UnicastDatagramBus::<ExampleClientBusTypes, ExampleCtx>::start(
-        bus_config, ctx, recv, msgs
+        bus_config,
+        ctx,
+        recv,
+        msgs,
+        ShutdownFlag::new()
     )
     .unwrap();
 

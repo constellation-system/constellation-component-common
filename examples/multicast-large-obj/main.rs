@@ -55,6 +55,7 @@ use constellation_common::ids::AscendingCount;
 use constellation_common::net::PassthruDatagramXfrm;
 use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::retry::Retry;
+use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_common::unix::UnixSocketPath;
 use constellation_component_common::bus::multicast::MulticastLargeObjBus;
@@ -506,7 +507,11 @@ fn server(conf: &str) {
     };
     let (bus, _) =
         MulticastLargeObjBus::<ExampleServerBusTypes, ExampleCtx>::start(
-            bus_config, ctx, recv, msgs
+            bus_config,
+            ctx,
+            recv,
+            msgs,
+            ShutdownFlag::new()
         )
         .unwrap();
 
@@ -546,7 +551,11 @@ fn client(conf: &str) {
     };
     let (bus, _) =
         MulticastLargeObjBus::<ExampleClientBusTypes, ExampleCtx>::start(
-            bus_config, ctx, recv, msgs
+            bus_config,
+            ctx,
+            recv,
+            msgs,
+            ShutdownFlag::new()
         )
         .unwrap();
 

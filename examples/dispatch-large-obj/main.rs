@@ -345,7 +345,8 @@ fn run(conf: &str) {
     let bus = DispatchLargeObjBus::<ExampleTypes, ExampleCtx>::start(
         bus_config,
         ExampleDispatch,
-        ctx
+        ctx,
+        ShutdownFlag::new()
     )
     .unwrap();
 

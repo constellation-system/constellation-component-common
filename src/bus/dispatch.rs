@@ -453,7 +453,8 @@ where
             Types::EpochsConfig
         >,
         session: SessionDisp,
-        ctx: Ctx
+        ctx: Ctx,
+        shutdown: ShutdownFlag
     ) -> Result<Self, Error>
     where
         SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
@@ -468,27 +469,28 @@ where
                 config: dispatch_config,
                 auth_config: auth_config
             };
-        let join_handle = DispatchThread::<
-            CompoundFarChannelsDatagramDispatchTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::Wrapper,
-                Types::Encoder,
-                Types::Decoder,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::MsgAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                Types::Msgs,
-                Types::Recv,
-                Ctx
-            >,
-            _,
-            _
-        >::start(thread_config, dispatcher, ctx)?;
+        let join_handle =
+            DispatchThread::<
+                CompoundFarChannelsDatagramDispatchTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::Wrapper,
+                    Types::Encoder,
+                    Types::Decoder,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::MsgAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    Types::Msgs,
+                    Types::Recv,
+                    Ctx
+                >,
+                _,
+                _
+            >::start(thread_config, dispatcher, ctx, shutdown)?;
 
         Ok(DispatchDatagramBus {
             types: PhantomData,
@@ -527,7 +529,8 @@ where
             Types::EpochsConfig
         >,
         session: SessionDisp,
-        ctx: Ctx
+        ctx: Ctx,
+        shutdown: ShutdownFlag
     ) -> Result<Self, Error>
     where
         SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
@@ -551,24 +554,25 @@ where
                 proto_config: proto_config,
                 hash_config: hash_config
             };
-        let join_handle = DispatchThread::<
-            CompoundFarChannelsLargeObjDispatchTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::LargeObjWrapper,
-                Types::LargeObjMsgAuth,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                BusLargeObjTypes<Types, Ctx>,
-                Ctx
-            >,
-            _,
-            _
-        >::start(thread_config, dispatcher, ctx)?;
+        let join_handle =
+            DispatchThread::<
+                CompoundFarChannelsLargeObjDispatchTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::LargeObjWrapper,
+                    Types::LargeObjMsgAuth,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    BusLargeObjTypes<Types, Ctx>,
+                    Ctx
+                >,
+                _,
+                _
+            >::start(thread_config, dispatcher, ctx, shutdown)?;
 
         Ok(DispatchLargeObjBus {
             types: PhantomData,
