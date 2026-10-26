@@ -68,7 +68,6 @@ use constellation_streams::stream::PushStreamAdd;
 use constellation_streams::stream::PushStreamPrivate;
 use constellation_streams::stream::RefCellStreamError;
 use constellation_streams::threads::dispatch::DispatchThreadCtx;
-use constellation_streams::threads::poll::MsgsSetNotify;
 use constellation_streams::threads::poll::PollThreadCtx;
 
 /// XXX Refactor to remove the stream instance from AuthNChan, then we
@@ -227,7 +226,7 @@ where
         >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
-    type Msgs: PrivateMsgs<Self::OutMsg> + MsgsSetNotify + Send;
+    type Msgs: PrivateMsgs<Self::OutMsg> + Send;
 }
 
 pub trait UnicastLargeObjBusTypes<Ctx>
@@ -431,7 +430,7 @@ where
         >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
-    type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsSetNotify + Send;
+    type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + Send;
 }
 
 pub trait MulticastDatagramBusTypes<Ctx>
@@ -590,9 +589,7 @@ where
         >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
-    type Msgs: SharedMsgs<MulticastStreamIdx, Self::OutMsg>
-        + MsgsSetNotify
-        + Send;
+    type Msgs: SharedMsgs<MulticastStreamIdx, Self::OutMsg> + Send;
 }
 
 pub trait MulticastLargeObjBusTypes<Ctx>
@@ -798,7 +795,7 @@ where
         >;
     type ResolverConfig: Clone + Default + Send;
     type Recv: Clone + AuthNMsgRecv<Self::MsgPrin, Self::AuthNMsg> + Send;
-    type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + MsgsSetNotify + Send;
+    type Msgs: LargeObjMsgs<Self::Hash, Self::OutMsg> + Send;
 }
 
 pub trait SessionDispatchTypes {

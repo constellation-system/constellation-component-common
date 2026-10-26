@@ -49,9 +49,9 @@ use constellation_common::net::PassthruDatagramXfrm;
 use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::net::PrivateMsgs;
 use constellation_common::shutdown::ShutdownFlag;
-use constellation_common::sync::Notify;
+use constellation_common::sync::NotifyFlag;
 use constellation_common::unix::UnixSocketPath;
-use constellation_component_common::bus::dispatch::DispatchDatagramBus;
+use constellation_component_common::bus::dispatch::DispatchDatagramBusStarter;
 use constellation_component_common::bus::dispatch::SessionDispatch;
 use constellation_component_common::bus::types::DispatchDatagramBusTypes;
 use constellation_component_common::bus::types::SessionDispatchTypes;
@@ -77,7 +77,7 @@ struct ExampleMsgs {
 }
 
 struct ExampleRecv {
-    notify: Notify,
+    notify: NotifyFlag,
     live: Arc<AtomicBool>
 }
 
@@ -154,7 +154,7 @@ impl SessionDispatch<ExampleDispTypes> for ExampleDispatch {
         &self,
         prin: &String,
         shutdown: ShutdownFlag,
-        notify: Notify
+        notify: NotifyFlag
     ) -> Result<(ShutdownFlag, ExampleMsgs, ExampleRecv), Self::SessionError>
     {
         debug!(target: "dispatch",
@@ -290,13 +290,12 @@ fn run(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = DispatchDatagramBus::<ExampleTypes, ExampleCtx>::start(
-        bus_config,
-        ExampleDispatch,
-        ctx,
-        ShutdownFlag::new()
-    )
-    .unwrap();
+    let (starter, _) =
+        DispatchDatagramBusStarter::<ExampleTypes, ExampleCtx>::create(
+            bus_config, ctx
+        )
+        .unwrap();
+    let bus = starter.start(ExampleDispatch, ShutdownFlag::new()).unwrap();
 
     bus.cleanup();
 }

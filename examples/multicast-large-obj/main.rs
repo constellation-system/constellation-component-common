@@ -23,7 +23,6 @@ use std::fmt::Error;
 use std::fmt::Formatter;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -47,7 +46,6 @@ use constellation_common::codec::test::TestBytesCodec;
 use constellation_common::codec::test::TooShort;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
-use constellation_common::error::MutexPoison;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::SHA3Algo;
 use constellation_common::hashid::SHA3ID;
@@ -58,7 +56,7 @@ use constellation_common::retry::Retry;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
 use constellation_common::unix::UnixSocketPath;
-use constellation_component_common::bus::multicast::MulticastLargeObjBus;
+use constellation_component_common::bus::multicast::MulticastLargeObjBusStarter;
 use constellation_component_common::bus::types::MulticastLargeObjBusTypes;
 use constellation_component_common::config::MulticastLargeObjBusConfig;
 use constellation_streams::frags::Frags;
@@ -69,7 +67,6 @@ use constellation_streams::large_obj::LargeObjProtoAddOutboundError;
 use constellation_streams::large_obj::LargeObjSender;
 use constellation_streams::threads::Tokens;
 use constellation_streams::threads::TokensCtx;
-use constellation_streams::threads::poll::MsgsSetNotify;
 use log::LevelFilter;
 use log::debug;
 use log::info;
@@ -84,27 +81,25 @@ struct ExampleCtx {
 }
 
 struct ExampleClientMsgs {
-    notify: Arc<Mutex<Option<Notify>>>,
     live: Arc<AtomicBool>,
     nretries: usize,
     retry: Retry
 }
 
 struct ExampleServerMsgs {
-    notify: Arc<Mutex<Option<Notify>>>,
     live: Arc<AtomicBool>,
     sent: bool
 }
 
 #[derive(Clone)]
 struct ExampleClientRecv {
-    notify: Arc<Mutex<Option<Notify>>>,
+    notify: Notify,
     live: Arc<AtomicBool>
 }
 
 #[derive(Clone)]
 struct ExampleServerRecv {
-    notify: Arc<Mutex<Option<Notify>>>,
+    notify: Notify,
     live: Arc<AtomicBool>
 }
 
@@ -118,36 +113,6 @@ enum LargeObjMsgsErr<Encode> {
 
 struct ExampleServerBusTypes;
 struct ExampleClientBusTypes;
-
-impl MsgsSetNotify for ExampleServerMsgs {
-    type Error = MutexPoison;
-
-    fn set_notify(
-        &mut self,
-        notify: Notify
-    ) -> Result<(), Self::Error> {
-        let mut guard = self.notify.lock().map_err(|_| MutexPoison)?;
-
-        *guard = Some(notify);
-
-        Ok(())
-    }
-}
-
-impl MsgsSetNotify for ExampleClientMsgs {
-    type Error = MutexPoison;
-
-    fn set_notify(
-        &mut self,
-        notify: Notify
-    ) -> Result<(), Self::Error> {
-        let mut guard = self.notify.lock().map_err(|_| MutexPoison)?;
-
-        *guard = Some(notify);
-
-        Ok(())
-    }
-}
 
 impl LargeObjMsgs<SHA3Algo, Vec<u8>> for ExampleClientMsgs {
     type AddMsgsError<Encode>
@@ -246,16 +211,8 @@ where
 
         self.live.store(false, Ordering::Release);
 
-        if let Ok(mut guard) = self.notify.lock() {
-            if let Some(notify) = &mut *guard {
-                if let Err(err) = notify.notify() {
-                    panic!("error waking: {}", err)
-                }
-            } else {
-                panic!("notify should not be None")
-            }
-        } else {
-            panic!("lock failed")
+        if let Err(err) = self.notify.notify() {
+            panic!("error waking: {}", err)
         }
 
         assert_eq!(msg, &SECOND_BYTES[..]);
@@ -281,16 +238,8 @@ where
 
         self.live.store(true, Ordering::Release);
 
-        if let Ok(mut guard) = self.notify.lock() {
-            if let Some(notify) = &mut *guard {
-                if let Err(err) = notify.notify() {
-                    panic!("error waking: {}", err)
-                }
-            } else {
-                panic!("notify should not be None")
-            }
-        } else {
-            panic!("lock failed")
+        if let Err(err) = self.notify.notify() {
+            panic!("error waking: {}", err)
         }
 
         assert_eq!(msg, &FIRST_BYTES[..]);
@@ -491,29 +440,24 @@ fn server(conf: &str) {
         ()
     > = yaml_serde::from_str(conf).unwrap();
     let live = Arc::new(AtomicBool::new(false));
-    let notify = Arc::new(Mutex::new(None));
+    let ctx = ExampleCtx {
+        inner: SharedNSNameCaches::new(),
+        tokens: Tokens::new()
+    };
+    let (starter, notify) = MulticastLargeObjBusStarter::<
+        ExampleServerBusTypes,
+        ExampleCtx
+    >::create(bus_config, ctx)
+    .unwrap();
     let recv = ExampleServerRecv {
         notify: notify.clone(),
         live: live.clone()
     };
     let msgs = ExampleServerMsgs {
-        notify: notify,
         live: live,
         sent: false
     };
-    let ctx = ExampleCtx {
-        inner: SharedNSNameCaches::new(),
-        tokens: Tokens::new()
-    };
-    let (bus, _) =
-        MulticastLargeObjBus::<ExampleServerBusTypes, ExampleCtx>::start(
-            bus_config,
-            ctx,
-            recv,
-            msgs,
-            ShutdownFlag::new()
-        )
-        .unwrap();
+    let (bus, _) = starter.start(recv, msgs, ShutdownFlag::new()).unwrap();
 
     bus.cleanup();
 }
@@ -534,30 +478,25 @@ fn client(conf: &str) {
         ()
     > = yaml_serde::from_str(conf).unwrap();
     let live = Arc::new(AtomicBool::new(true));
-    let notify = Arc::new(Mutex::new(None));
+    let ctx = ExampleCtx {
+        inner: SharedNSNameCaches::new(),
+        tokens: Tokens::new()
+    };
+    let (starter, notify) = MulticastLargeObjBusStarter::<
+        ExampleClientBusTypes,
+        ExampleCtx
+    >::create(bus_config, ctx)
+    .unwrap();
     let recv = ExampleClientRecv {
         notify: notify.clone(),
         live: live.clone()
     };
     let msgs = ExampleClientMsgs {
         live: live,
-        notify: notify,
         retry: Retry::TERRESTRIAL_NETWORK_DEFAULT.clone(),
         nretries: 0
     };
-    let ctx = ExampleCtx {
-        inner: SharedNSNameCaches::new(),
-        tokens: Tokens::new()
-    };
-    let (bus, _) =
-        MulticastLargeObjBus::<ExampleClientBusTypes, ExampleCtx>::start(
-            bus_config,
-            ctx,
-            recv,
-            msgs,
-            ShutdownFlag::new()
-        )
-        .unwrap();
+    let (bus, _) = starter.start(recv, msgs, ShutdownFlag::new()).unwrap();
 
     bus.cleanup();
 }

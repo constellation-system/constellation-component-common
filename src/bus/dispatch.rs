@@ -35,8 +35,10 @@ use constellation_common::config::Create;
 use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
+use constellation_common::error::WithMutexPoison;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
+use constellation_common::sync::NotifyFlag;
 use constellation_streams::config::DispatchConfig;
 use constellation_streams::config::LargeObjProtoConfig;
 use constellation_streams::large_obj::LargeObjMsg;
@@ -47,8 +49,8 @@ use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::select::dispatch::DispatchSelector;
 use constellation_streams::select::dispatch::DispatchSelectorCreateError;
 use constellation_streams::threads::dispatch::Dispatch;
-use constellation_streams::threads::dispatch::DispatchThread;
 use constellation_streams::threads::dispatch::DispatchThreadCtx;
+use constellation_streams::threads::dispatch::DispatchThreadStarter;
 use constellation_streams::threads::dispatch::Dispatched;
 use log::debug;
 use log::error;
@@ -81,7 +83,7 @@ where
         &self,
         prin: &Types::SessionPrin,
         shutdown: ShutdownFlag,
-        notify: Notify
+        notify: NotifyFlag
     ) -> Result<(ShutdownFlag, Types::Msgs, Types::Recv), Self::SessionError>;
 }
 
@@ -137,6 +139,34 @@ pub enum LargeObjDispatchError<Session, Stream, Hash, ProtoAuth, Auth, Proto> {
     }
 }
 
+pub struct DispatchDatagramBusStarter<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    auth_config: Types::MsgAuthConfig,
+    starter: DispatchThreadStarter<
+        CompoundFarChannelsDatagramDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::Wrapper,
+            Types::Encoder,
+            Types::Decoder,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::MsgAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            Types::Msgs,
+            Types::Recv,
+            Ctx
+        >,
+        Ctx
+    >
+}
+
 pub struct DispatchDatagramBus<Types, Ctx>
 where
     Types: 'static + DispatchDatagramBusTypes<Ctx>,
@@ -144,6 +174,38 @@ where
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
     join_handle: JoinHandle<()>
+}
+
+pub struct DispatchLargeObjBusStarter<Types, Ctx>
+where
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    proto_config: LargeObjProtoConfig<
+        Types::EncoderConfig,
+        Types::DecoderConfig,
+        Types::IDsConfig
+    >,
+    proto_auth_config: Types::LargeObjMsgAuthConfig,
+    msg_auth_config: Types::MsgAuthConfig,
+    hash_config: Types::HashConfig,
+    starter: DispatchThreadStarter<
+        CompoundFarChannelsLargeObjDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::LargeObjWrapper,
+            Types::LargeObjMsgAuth,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            BusLargeObjTypes<Types, Ctx>,
+            Ctx
+        >,
+        Ctx
+    >
 }
 
 pub struct DispatchLargeObjBus<Types, Ctx>
@@ -176,9 +238,9 @@ where
     SessionDisp: SessionDispatch<Types::DispTypes>,
     Types: DispatchDatagramBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send {
-    session: SessionDisp,
-    config: DispatchConfig<Types::EpochsConfig>,
-    auth_config: Types::MsgAuthConfig
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    auth_config: Types::MsgAuthConfig,
+    session: SessionDisp
 }
 
 struct LargeObjDispatcher<Types, SessionDisp, Ctx>
@@ -290,7 +352,7 @@ where
         >,
         prin: &Types::SessionPrin,
         shutdown: ShutdownFlag,
-        notify: Notify
+        notify: NotifyFlag
     ) -> Result<
         Dispatched<
             CompoundFarChannelsDatagramDispatchTypes<
@@ -318,8 +380,9 @@ where
             .session
             .session(prin, shutdown, notify)
             .map_err(|err| DatagramDispatchError::Session { err: err })?;
-        let stream = DispatchSelector::create(self.config.clone(), ctx)
-            .map_err(|err| DatagramDispatchError::Stream { err: err })?;
+        let stream =
+            DispatchSelector::create(self.dispatch_config.clone(), ctx)
+                .map_err(|err| DatagramDispatchError::Stream { err: err })?;
         let authn = Types::MsgAuth::create(self.auth_config.clone())
             .map_err(|err| DatagramDispatchError::Auth { err: err })?;
         let dispatched = Dispatched::new(shutdown, stream, msgs, authn, recv);
@@ -382,7 +445,7 @@ where
         >,
         prin: &Types::SessionPrin,
         shutdown: ShutdownFlag,
-        notify: Notify
+        notify: NotifyFlag
     ) -> Result<
         Dispatched<
             CompoundFarChannelsLargeObjDispatchTypes<
@@ -405,7 +468,7 @@ where
     > {
         let (shutdown, msgs, recv) = self
             .session
-            .session(prin, shutdown, notify)
+            .session(prin, shutdown, notify.clone())
             .map_err(|err| LargeObjDispatchError::Session { err: err })?;
         let hash = Types::Hash::create(self.hash_config.clone())
             .map_err(|err| LargeObjDispatchError::Hash { err: err })?;
@@ -418,7 +481,8 @@ where
             recv,
             msgs,
             authn,
-            hash
+            hash,
+            notify.into()
         )
         .map_err(|err| LargeObjDispatchError::Proto { err: err })?;
         let large_obj = Arc::new(Mutex::new(large_obj));
@@ -437,12 +501,12 @@ where
     }
 }
 
-impl<Types, Ctx> DispatchDatagramBus<Types, Ctx>
+impl<Types, Ctx> DispatchDatagramBusStarter<Types, Ctx>
 where
     Types: 'static + DispatchDatagramBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send
 {
-    pub fn start<SessionDisp>(
+    pub fn create(
         config: DispatchDatagramBusConfig<
             Types::SessionAuthConfig,
             Types::MsgAuthConfig,
@@ -452,45 +516,63 @@ where
             Types::DecoderConfig,
             Types::EpochsConfig
         >,
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let (auth_config, dispatch_config, thread_config) = config.take();
+        let (starter, notify) = DispatchThreadStarter::<
+            CompoundFarChannelsDatagramDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
+            >,
+            _
+        >::create(thread_config, ctx)?;
+
+        Ok((
+            DispatchDatagramBusStarter {
+                dispatch_config: dispatch_config,
+                auth_config: auth_config,
+                starter: starter
+            },
+            notify
+        ))
+    }
+
+    pub fn start<SessionDisp>(
+        self,
         session: SessionDisp,
-        ctx: Ctx,
         shutdown: ShutdownFlag
-    ) -> Result<Self, Error>
+    ) -> Result<DispatchDatagramBus<Types, Ctx>, WithMutexPoison<Error>>
     where
         SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
         info!(target: "dispatch-datagram-bus",
               "creating dispatch bus");
 
-        let (auth_config, dispatch_config, thread_config) = config.take();
+        let DispatchDatagramBusStarter {
+            auth_config,
+            dispatch_config,
+            starter
+        } = self;
 
         let dispatcher: DatagramDispatcher<Types, SessionDisp, _> =
             DatagramDispatcher {
-                session: session,
-                config: dispatch_config,
-                auth_config: auth_config
+                dispatch_config: dispatch_config,
+                auth_config: auth_config,
+                session: session
             };
-        let join_handle =
-            DispatchThread::<
-                CompoundFarChannelsDatagramDispatchTypes<
-                    Types::InMsg,
-                    Types::OutMsg,
-                    Types::Wrapper,
-                    Types::Encoder,
-                    Types::Decoder,
-                    Types::AuthNChan,
-                    Types::SessionAuth,
-                    Types::MsgAuth,
-                    Types::Unix,
-                    Types::UDP,
-                    Types::Epochs,
-                    Types::Resolver,
-                    Types::Msgs,
-                    Types::Recv,
-                    Ctx
-                >,
-                _,
-                _
-            >::start(thread_config, dispatcher, ctx, shutdown)?;
+        let join_handle = starter.start(dispatcher, shutdown)?;
 
         Ok(DispatchDatagramBus {
             types: PhantomData,
@@ -498,7 +580,13 @@ where
             join_handle: join_handle
         })
     }
+}
 
+impl<Types, Ctx> DispatchDatagramBus<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn cleanup(self) {
         debug!(target: "dispatch-bus-cleanup",
                "joining pull streams");
@@ -510,12 +598,12 @@ where
     }
 }
 
-impl<Types, Ctx> DispatchLargeObjBus<Types, Ctx>
+impl<Types, Ctx> DispatchLargeObjBusStarter<Types, Ctx>
 where
     Types: 'static + DispatchLargeObjBusTypes<Ctx>,
     Ctx: 'static + NSNameCachesCtx + Send
 {
-    pub fn start<SessionDisp>(
+    pub fn create(
         config: DispatchLargeObjBusConfig<
             Types::HashConfig,
             Types::SessionAuthConfig,
@@ -528,15 +616,8 @@ where
             Types::IDsConfig,
             Types::EpochsConfig
         >,
-        session: SessionDisp,
-        ctx: Ctx,
-        shutdown: ShutdownFlag
-    ) -> Result<Self, Error>
-    where
-        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
-        info!(target: "dispatch-datagram-bus",
-              "creating dispatch bus");
-
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
         let (
             msg_auth_config,
             dispatch_config,
@@ -545,6 +626,55 @@ where
             proto_auth_config,
             hash_config
         ) = config.take();
+        let (starter, notify) = DispatchThreadStarter::<
+            CompoundFarChannelsLargeObjDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::LargeObjWrapper,
+                Types::LargeObjMsgAuth,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                BusLargeObjTypes<Types, Ctx>,
+                Ctx
+            >,
+            _
+        >::create(thread_config, ctx)?;
+
+        Ok((
+            DispatchLargeObjBusStarter {
+                msg_auth_config: msg_auth_config,
+                dispatch_config: dispatch_config,
+                proto_config: proto_config,
+                proto_auth_config: proto_auth_config,
+                hash_config: hash_config,
+                starter: starter
+            },
+            notify
+        ))
+    }
+
+    pub fn start<SessionDisp>(
+        self,
+        session: SessionDisp,
+        shutdown: ShutdownFlag
+    ) -> Result<DispatchLargeObjBus<Types, Ctx>, WithMutexPoison<Error>>
+    where
+        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
+        info!(target: "dispatch-datagram-bus",
+              "creating dispatch bus");
+
+        let DispatchLargeObjBusStarter {
+            proto_auth_config,
+            msg_auth_config,
+            dispatch_config,
+            proto_config,
+            hash_config,
+            starter
+        } = self;
         let dispatcher: LargeObjDispatcher<Types, SessionDisp, _> =
             LargeObjDispatcher {
                 session: session,
@@ -554,25 +684,7 @@ where
                 proto_config: proto_config,
                 hash_config: hash_config
             };
-        let join_handle =
-            DispatchThread::<
-                CompoundFarChannelsLargeObjDispatchTypes<
-                    Types::InMsg,
-                    Types::OutMsg,
-                    Types::LargeObjWrapper,
-                    Types::LargeObjMsgAuth,
-                    Types::AuthNChan,
-                    Types::SessionAuth,
-                    Types::Unix,
-                    Types::UDP,
-                    Types::Epochs,
-                    Types::Resolver,
-                    BusLargeObjTypes<Types, Ctx>,
-                    Ctx
-                >,
-                _,
-                _
-            >::start(thread_config, dispatcher, ctx, shutdown)?;
+        let join_handle = starter.start(dispatcher, shutdown)?;
 
         Ok(DispatchLargeObjBus {
             types: PhantomData,
@@ -580,7 +692,13 @@ where
             join_handle: join_handle
         })
     }
+}
 
+impl<Types, Ctx> DispatchLargeObjBus<Types, Ctx>
+where
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn cleanup(self) {
         debug!(target: "dispatch-bus-cleanup",
                "joining pull streams");

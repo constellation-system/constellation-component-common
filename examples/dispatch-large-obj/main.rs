@@ -53,9 +53,9 @@ use constellation_common::ids::AscendingCount;
 use constellation_common::net::PassthruDatagramXfrm;
 use constellation_common::net::PassthruDatagramXfrmParam;
 use constellation_common::shutdown::ShutdownFlag;
-use constellation_common::sync::Notify;
+use constellation_common::sync::NotifyFlag;
 use constellation_common::unix::UnixSocketPath;
-use constellation_component_common::bus::dispatch::DispatchLargeObjBus;
+use constellation_component_common::bus::dispatch::DispatchLargeObjBusStarter;
 use constellation_component_common::bus::dispatch::SessionDispatch;
 use constellation_component_common::bus::types::DispatchLargeObjBusTypes;
 use constellation_component_common::bus::types::SessionDispatchTypes;
@@ -88,7 +88,7 @@ struct ExampleMsgs {
 
 #[derive(Clone)]
 struct ExampleRecv {
-    notify: Notify,
+    notify: NotifyFlag,
     live: Arc<AtomicBool>
 }
 
@@ -181,7 +181,7 @@ impl SessionDispatch<ExampleDispTypes> for ExampleDispatch {
         &self,
         prin: &String,
         shutdown: ShutdownFlag,
-        notify: Notify
+        notify: NotifyFlag
     ) -> Result<(ShutdownFlag, ExampleMsgs, ExampleRecv), Self::SessionError>
     {
         debug!(target: "dispatch",
@@ -342,13 +342,12 @@ fn run(conf: &str) {
         inner: SharedNSNameCaches::new(),
         tokens: Tokens::new()
     };
-    let bus = DispatchLargeObjBus::<ExampleTypes, ExampleCtx>::start(
-        bus_config,
-        ExampleDispatch,
-        ctx,
-        ShutdownFlag::new()
-    )
-    .unwrap();
+    let (starter, _) =
+        DispatchLargeObjBusStarter::<ExampleTypes, ExampleCtx>::create(
+            bus_config, ctx
+        )
+        .unwrap();
+    let bus = starter.start(ExampleDispatch, ShutdownFlag::new()).unwrap();
 
     bus.cleanup();
 }

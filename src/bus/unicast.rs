@@ -19,6 +19,7 @@
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::io::Error;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -31,11 +32,13 @@ use constellation_channels::resolve::cache::NSNameCachesCtx;
 use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
 use constellation_common::shutdown::ShutdownFlag;
+use constellation_common::sync::Notify;
+use constellation_streams::config::LargeObjProtoConfig;
 use constellation_streams::large_obj::LargeObjProto;
 use constellation_streams::large_obj::LargeObjProtoCreateError;
 use constellation_streams::large_obj::LargeObjProtoTypes;
-use constellation_streams::threads::poll::PollThread;
 use constellation_streams::threads::poll::PollThreadStartError;
+use constellation_streams::threads::poll::PollThreadStarter;
 use log::debug;
 use log::error;
 use log::info;
@@ -45,6 +48,32 @@ use crate::bus::types::UnicastLargeObjBusTypes;
 use crate::config::UnicastDatagramBusConfig;
 use crate::config::UnicastLargeObjBusConfig;
 
+pub struct UnicastDatagramBusStarter<Types, Ctx>
+where
+    Types: 'static + UnicastDatagramBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    starter: PollThreadStarter<
+        Ctx,
+        CompoundFarChannelsDatagramSelectorPollTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::Wrapper,
+            Types::Encoder,
+            Types::Decoder,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::MsgAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            Types::Msgs,
+            Types::Recv,
+            Ctx
+        >
+    >
+}
+
 pub struct UnicastDatagramBus<Types, Ctx>
 where
     Types: UnicastDatagramBusTypes<Ctx>,
@@ -52,6 +81,37 @@ where
     types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
     poll_join: JoinHandle<()>
+}
+
+pub struct UnicastLargeObjBusStarter<Types, Ctx>
+where
+    Types: 'static + UnicastLargeObjBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    starter: PollThreadStarter<
+        Ctx,
+        CompoundFarChannelsLargeObjSelectorPollTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::LargeObjWrapper,
+            Types::LargeObjMsgAuth,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            BusLargeObjTypes<Types, Ctx>,
+            Ctx
+        >
+    >,
+    large_obj_config: LargeObjProtoConfig<
+        Types::EncoderConfig,
+        Types::DecoderConfig,
+        Types::IDsConfig
+    >,
+    proto_auth_config: Types::MsgAuthConfig,
+    hash_config: Types::HashConfig,
+    notify: Notify
 }
 
 pub struct UnicastLargeObjBus<Types, Ctx>
@@ -129,12 +189,12 @@ where
     type Wrapper = Types::Wrapper;
 }
 
-impl<Types, Ctx> UnicastDatagramBus<Types, Ctx>
+impl<Types, Ctx> UnicastDatagramBusStarter<Types, Ctx>
 where
-    Types: 'static + UnicastDatagramBusTypes<Ctx>,
+    Types: 'static + UnicastDatagramBusTypes<Ctx> + Send,
     Ctx: 'static + NSNameCachesCtx + Send
 {
-    pub fn start(
+    pub fn create(
         config: UnicastDatagramBusConfig<
             Types::SessionAuthConfig,
             Types::UnixConfig,
@@ -145,36 +205,44 @@ where
             Types::EpochsConfig,
             Types::MsgAuthConfig
         >,
-        ctx: Ctx,
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let poll_config = config.take();
+        let (starter, notify) = PollThreadStarter::<
+            Ctx,
+            CompoundFarChannelsDatagramSelectorPollTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
+            >
+        >::create(poll_config, None, ctx)?;
+
+        Ok((UnicastDatagramBusStarter { starter: starter }, notify))
+    }
+
+    pub fn start(
+        self,
         recv: Types::Recv,
         msgs: Types::Msgs,
         shutdown: ShutdownFlag
-    ) -> Result<Self, PollThreadStartError> {
+    ) -> Result<UnicastDatagramBus<Types, Ctx>, PollThreadStartError> {
         info!(target: "unicast-datagram-bus",
               "creating unicast datagram bus");
 
-        let poll_config = config.take();
-        let poll_join =
-            PollThread::<
-                Ctx,
-                CompoundFarChannelsDatagramSelectorPollTypes<
-                    Types::InMsg,
-                    Types::OutMsg,
-                    Types::Wrapper,
-                    Types::Encoder,
-                    Types::Decoder,
-                    Types::AuthNChan,
-                    Types::SessionAuth,
-                    Types::MsgAuth,
-                    Types::Unix,
-                    Types::UDP,
-                    Types::Epochs,
-                    Types::Resolver,
-                    Types::Msgs,
-                    Types::Recv,
-                    Ctx
-                >
-            >::start(poll_config, None, ctx, recv, msgs, shutdown)?;
+        let UnicastDatagramBusStarter { starter } = self;
+        let poll_join = starter.start(recv, msgs, shutdown)?;
 
         Ok(UnicastDatagramBus {
             types: PhantomData,
@@ -182,7 +250,13 @@ where
             poll_join: poll_join
         })
     }
+}
 
+impl<Types, Ctx> UnicastDatagramBus<Types, Ctx>
+where
+    Types: 'static + UnicastDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn cleanup(self) {
         debug!(target: "unicast-datagram-bus-cleanup",
                "joining poll thread");
@@ -194,12 +268,12 @@ where
     }
 }
 
-impl<Types, Ctx> UnicastLargeObjBus<Types, Ctx>
+impl<Types, Ctx> UnicastLargeObjBusStarter<Types, Ctx>
 where
-    Types: 'static + UnicastLargeObjBusTypes<Ctx>,
+    Types: 'static + UnicastLargeObjBusTypes<Ctx> + Send,
     Ctx: 'static + NSNameCachesCtx + Send
 {
-    pub fn start(
+    pub fn create(
         config: UnicastLargeObjBusConfig<
             Types::HashConfig,
             Types::SessionAuthConfig,
@@ -213,38 +287,11 @@ where
             Types::EpochsConfig,
             Types::MsgAuthConfig
         >,
-        ctx: Ctx,
-        recv: Types::Recv,
-        msgs: Types::Msgs,
-        shutdown: ShutdownFlag
-    ) -> Result<
-        Self,
-        UnicastLargeObjBusCreateError<
-            Types::HashCreateError,
-            Types::MsgAuthCreateError,
-            LargeObjProtoCreateError<
-                Types::EncoderCreateError,
-                Types::DecoderCreateError,
-                Types::IDsCreateError
-            >
-        >
-    > {
-        info!(target: "unicast-large-obj-bus",
-              "creating unicast large object bus");
-
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
         let (poll_config, large_obj_config, proto_auth_config, hash_config) =
             config.take();
-        let hash = Types::Hash::create(hash_config)
-            .map_err(|err| UnicastLargeObjBusCreateError::Hash { err: err })?;
-        let msgauth = Types::MsgAuth::create(proto_auth_config)
-            .map_err(|err| UnicastLargeObjBusCreateError::Auth { err: err })?;
-        let large_obj =
-            LargeObjProto::create(large_obj_config, recv, msgs, msgauth, hash)
-                .map_err(|err| UnicastLargeObjBusCreateError::Proto {
-                    err: err
-                })?;
-        let large_obj = Arc::new(Mutex::new(large_obj));
-        let poll_join = PollThread::<
+        let (starter, notify) = PollThreadStarter::<
             Ctx,
             CompoundFarChannelsLargeObjSelectorPollTypes<
                 Types::InMsg,
@@ -260,15 +307,66 @@ where
                 BusLargeObjTypes<Types, Ctx>,
                 Ctx
             >
-        >::start(
-            poll_config,
-            None,
-            ctx,
-            large_obj.clone(),
-            large_obj,
-            shutdown
+        >::create(poll_config, None, ctx)?;
+
+        Ok((
+            UnicastLargeObjBusStarter {
+                proto_auth_config: proto_auth_config,
+                large_obj_config: large_obj_config,
+                hash_config: hash_config,
+                starter: starter,
+                notify: notify.clone()
+            },
+            notify
+        ))
+    }
+
+    pub fn start(
+        self,
+        recv: Types::Recv,
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
+    ) -> Result<
+        UnicastLargeObjBus<Types, Ctx>,
+        UnicastLargeObjBusCreateError<
+            Types::HashCreateError,
+            Types::MsgAuthCreateError,
+            LargeObjProtoCreateError<
+                Types::EncoderCreateError,
+                Types::DecoderCreateError,
+                Types::IDsCreateError
+            >
+        >
+    > {
+        info!(target: "unicast-large-obj-bus",
+              "creating unicast large object bus");
+
+        let UnicastLargeObjBusStarter {
+            proto_auth_config,
+            large_obj_config,
+            hash_config,
+            starter,
+            notify
+        } = self;
+        let hash = Types::Hash::create(hash_config)
+            .map_err(|err| UnicastLargeObjBusCreateError::Hash { err: err })?;
+        let msgauth = Types::MsgAuth::create(proto_auth_config)
+            .map_err(|err| UnicastLargeObjBusCreateError::Auth { err: err })?;
+        let large_obj = LargeObjProto::create(
+            large_obj_config,
+            recv,
+            msgs,
+            msgauth,
+            hash,
+            notify
         )
-        .map_err(|err| UnicastLargeObjBusCreateError::Start { err: err })?;
+        .map_err(|err| UnicastLargeObjBusCreateError::Proto { err: err })?;
+        let large_obj = Arc::new(Mutex::new(large_obj));
+        let poll_join = starter
+            .start(large_obj.clone(), large_obj, shutdown)
+            .map_err(|err| {
+            UnicastLargeObjBusCreateError::Start { err: err }
+        })?;
 
         Ok(UnicastLargeObjBus {
             types: PhantomData,
@@ -276,7 +374,13 @@ where
             poll_join: poll_join
         })
     }
+}
 
+impl<Types, Ctx> UnicastLargeObjBus<Types, Ctx>
+where
+    Types: 'static + UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn cleanup(self) {
         debug!(target: "unicast-large-obj-bus-cleanup",
                "joining poll thread");
