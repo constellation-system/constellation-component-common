@@ -214,26 +214,27 @@ where
         ctx: Ctx
     ) -> Result<(Self, Notify), Error> {
         let (poll_config, self_party) = config.take();
-        let (starter, notify) = PollThreadStarter::<
-            Ctx,
-            CompoundFarChannelsDatagramMulticastPollTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::Wrapper,
-                Types::Encoder,
-                Types::Decoder,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::MsgAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                Types::Msgs,
-                Types::Recv,
-                Ctx
-            >
-        >::create(poll_config, self_party, ctx)?;
+        let (starter, notify) =
+            PollThreadStarter::<
+                Ctx,
+                CompoundFarChannelsDatagramMulticastPollTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::Wrapper,
+                    Types::Encoder,
+                    Types::Decoder,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::MsgAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    Types::Msgs,
+                    Types::Recv,
+                    Ctx
+                >
+            >::create(poll_config, Some(self_party), ctx)?;
 
         Ok((MulticastDatagramBusStarter { starter: starter }, notify))
     }
@@ -310,34 +311,31 @@ where
                 .stream()
                 .parties()
                 .iter()
-                .filter(|ent| {
-                    self_party
-                        .as_ref()
-                        .is_none_or(|self_party| self_party != ent.party())
-                })
+                .filter(|ent| &self_party != ent.party())
                 .enumerate()
                 .map(|(i, ent)| {
                     (MulticastStreamIdx::from(i), ent.party().clone())
                 })
                 .collect();
 
-        let (starter, notify) = PollThreadStarter::<
-            Ctx,
-            CompoundFarChannelsLargeObjMulticastPollTypes<
-                Types::InMsg,
-                Types::OutMsg,
-                Types::LargeObjWrapper,
-                Types::LargeObjMsgAuth,
-                Types::AuthNChan,
-                Types::SessionAuth,
-                Types::Unix,
-                Types::UDP,
-                Types::Epochs,
-                Types::Resolver,
-                BusLargeObjTypes<Types, Ctx>,
-                Ctx
-            >
-        >::create(poll_config, self_party, ctx)?;
+        let (starter, notify) =
+            PollThreadStarter::<
+                Ctx,
+                CompoundFarChannelsLargeObjMulticastPollTypes<
+                    Types::InMsg,
+                    Types::OutMsg,
+                    Types::LargeObjWrapper,
+                    Types::LargeObjMsgAuth,
+                    Types::AuthNChan,
+                    Types::SessionAuth,
+                    Types::Unix,
+                    Types::UDP,
+                    Types::Epochs,
+                    Types::Resolver,
+                    BusLargeObjTypes<Types, Ctx>,
+                    Ctx
+                >
+            >::create(poll_config, Some(self_party), ctx)?;
 
         Ok((
             MulticastLargeObjBusStarter {

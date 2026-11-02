@@ -164,8 +164,7 @@ pub struct MulticastDatagramBusConfig<
         MsgAuthN
     >,
     #[serde(rename = "self")]
-    #[serde(default = "default_self_party")]
-    self_party: Option<Party>
+    self_party: Party
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -213,8 +212,7 @@ pub struct MulticastLargeObjBusConfig<
     #[serde(default)]
     hash: Hash,
     #[serde(rename = "self")]
-    #[serde(default = "default_self_party")]
-    self_party: Option<Party>
+    self_party: Party
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -336,10 +334,6 @@ where
         #[serde(rename = "static")]
         stat: Vec<StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>>
     }
-}
-
-fn default_self_party<Party>() -> Option<Party> {
-    None
 }
 
 impl<Seal, Payload, Effect, Res, Err>
@@ -629,6 +623,30 @@ where
     UDP: Default
 {
     #[inline]
+    pub fn thread(
+        &self
+    ) -> &CompoundFarMulticastPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        SharedDatagramModeConfig,
+        Party,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
+    > {
+        &self.thread
+    }
+
+    #[inline]
+    pub fn self_party(&self) -> &Party {
+        &self.self_party
+    }
+
+    #[inline]
     pub fn take(
         self
     ) -> (
@@ -645,7 +663,7 @@ where
             String,
             MsgAuthN
         >,
-        Option<Party>
+        Party
     ) {
         (self.thread, self.self_party)
     }
@@ -690,6 +708,11 @@ where
     UDP: Default
 {
     #[inline]
+    pub fn self_party(&self) -> &Party {
+        &self.self_party
+    }
+
+    #[inline]
     pub fn take(
         self
     ) -> (
@@ -709,7 +732,7 @@ where
         LargeObjProtoConfig<Enc, Dec, IDs>,
         MsgAuthN,
         Hash,
-        Option<Party>
+        Party
     ) {
         (
             self.thread,

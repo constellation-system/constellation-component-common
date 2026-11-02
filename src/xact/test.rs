@@ -24,6 +24,7 @@ use std::fmt::Formatter;
 use constellation_common::codec::Decoder;
 use constellation_common::codec::Encoder;
 use constellation_common::config::Create;
+use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::hashid::SHA3Algo;
@@ -240,6 +241,19 @@ impl Create for TestSealCodec {
 
     #[inline]
     fn create(_config: ()) -> Result<Self, Infallible> {
+        Ok(TestSealCodec)
+    }
+}
+
+impl CreateWithParam<()> for TestSealCodec {
+    type Config = ();
+    type CreateError = Infallible;
+
+    #[inline]
+    fn create(
+        _config: (),
+        _param: ()
+    ) -> Result<Self, Infallible> {
         Ok(TestSealCodec)
     }
 }
