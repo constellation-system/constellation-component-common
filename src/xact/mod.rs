@@ -591,7 +591,7 @@ pub struct XactHashBatchCodec<
 }
 
 #[derive(Clone)]
-pub struct XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+pub struct XactBlobBatchCodec<RoundID, H, Seal, SealCodec>
 where
     RoundID: Clone + From<u128> + Into<u128>,
     H: Clone + Default + HashAlgo,
@@ -5506,7 +5506,7 @@ where
 }
 
 impl<RoundID, H, Seal, SealCodec> Create
-    for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+    for XactBlobBatchCodec<RoundID, H, Seal, SealCodec>
 where
     H: Clone + Default + HashAlgo,
     H::HashID: Clone,
@@ -5537,7 +5537,7 @@ where
         let notify_codec = XactNotifyBlobCodec::create(())
             .map_err(|err| XactBatchCodecCreateError::Notify { err: err })?;
 
-        Ok(XactBatchBlobCodec {
+        Ok(XactBlobBatchCodec {
             header_codec: XactBatchHeaderPERCodec::default(),
             committed_codec: committed_codec,
             req_codec: req_codec,
@@ -5557,7 +5557,7 @@ impl<RoundID, H, Seal, SealCodec>
             Vec<u8>,
             Vec<u8>
         >
-    > for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+    > for XactBlobBatchCodec<RoundID, H, Seal, SealCodec>
 where
     H: Clone + Default + HashAlgo,
     H::HashID: Clone,
@@ -5692,7 +5692,7 @@ impl<RoundID, H, Seal, SealCodec>
             Vec<u8>,
             Vec<u8>
         >
-    > for XactBatchBlobCodec<RoundID, H, Seal, SealCodec>
+    > for XactBlobBatchCodec<RoundID, H, Seal, SealCodec>
 where
     H: Clone + Default + HashAlgo,
     H::HashID: Clone,
