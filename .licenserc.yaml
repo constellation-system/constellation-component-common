@@ -30,6 +30,7 @@ header:
     - 'gen_test_certs.sh'
     - 'build.rs'
     - '**/*.asn1'
+    - '**/*.yml'
     - '*.md'
     - '.gitignore'
     - '.licenserc.yaml'
