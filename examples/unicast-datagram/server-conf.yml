@@ -1,0 +1,41 @@
+default-session-authn:
+  rules:
+    - prin: client
+      cred:
+        unix: bus-example-client-datagram.sock
+
+    - prin: client
+      cred:
+        unsafe:
+          ip: '[::1]:9229'
+
+  unsafe:
+    allow-ip-addr-creds: true
+
+channels:
+  - id: server-udp
+    udp:
+      addr: '[::0]:9119'
+      unsafe:
+        allow-ip-addr-creds: true
+
+  - id: server-unix
+    unix-datagram:
+      path: bus-example-server-datagram.sock
+
+connections:
+  - channel-names:
+      - server-udp
+
+    endpoints:
+      - addr:
+          udp: '[::1]:9229'
+
+  - channel-names:
+      - server-unix
+
+    endpoints:
+      - addr:
+          unix-datagram: bus-example-client-datagram.sock
+
+msg-authn: null

@@ -1,4 +1,4 @@
-// Copyright © 2024-25 The Johns Hopkins Applied Physics Laboratory LLC.
+// Copyright © 2024-26 The Johns Hopkins Applied Physics Laboratory LLC.
 //
 // This program is free software: you can redistribute it and/or
 // modify it under the terms of the GNU Affero General Public License,
@@ -16,639 +16,398 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::hash::Hash;
 use std::io::Error;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 
-use constellation_auth::authn::AuthNMsgRecv;
-use constellation_auth::authn::PassthruMsgAuthN;
-use constellation_auth::authn::SessionAuthN;
-use constellation_channels::config::ChannelRegistryChannelsConfig;
-use constellation_channels::config::CompoundFarEndpoint;
-use constellation_channels::config::ResolverConfig;
-use constellation_channels::far::compound::CompoundFarChannel;
-use constellation_channels::far::compound::CompoundFarChannelThreadedFlows;
-use constellation_channels::far::compound::CompoundFarChannelXfrmPeerAddr;
-use constellation_channels::far::flows::OwnedFlowNegotiator;
-use constellation_channels::far::flows::OwnedFlowsCreate;
-use constellation_channels::far::flows::ThreadedFlowsListener;
-use constellation_channels::far::flows::ThreadedFlowsPullStreamListener;
-use constellation_channels::far::registry::FarChannelRegistryAcquireError;
-use constellation_channels::far::registry::FarChannelRegistryChannels;
-use constellation_channels::far::registry::FarChannelRegistryChannelsCreateError;
-use constellation_channels::far::registry::FarChannelRegistryCtx;
-use constellation_channels::far::registry::FarChannelRegistryID;
-use constellation_channels::far::registry::RegistryAcquireError;
-use constellation_channels::far::udp::UDPDatagramXfrm;
-use constellation_channels::far::unix::UnixDatagramXfrm;
-use constellation_channels::far::FarChannelAcquired;
-use constellation_channels::far::FarChannelAcquiredResolve;
-use constellation_channels::far::FarChannelCreate;
-use constellation_channels::far::FarChannelFlowsError;
-use constellation_channels::far::FarChannelOwnedFlows;
+use constellation_auth::authn::MsgAuthNTypes;
+use constellation_channels::far::types::CompoundFarChannelsDatagramSelectorPollTypes;
+use constellation_channels::far::types::CompoundFarChannelsLargeObjSelectorPollTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
-use constellation_channels::resolve::MixedResolver;
-use constellation_common::codec::Codec;
-use constellation_common::codec::DatagramCodec;
-use constellation_common::ids::IDGen;
-use constellation_common::net::DatagramXfrm;
-use constellation_common::net::DatagramXfrmCreate;
-use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::PrivateMsgs;
-use constellation_common::net::Socket;
+use constellation_common::codec::Decoder;
+use constellation_common::config::Create;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
-use constellation_streams::addrs::Addrs;
-use constellation_streams::addrs::AddrsCreate;
-use constellation_streams::channels::ChannelParam;
-use constellation_streams::select::StreamSelector;
-use constellation_streams::select::StreamSelectorCreateError;
-use constellation_streams::select::StreamSelectorReporter;
-use constellation_streams::select::ThreadedStreamSelectorError;
-use constellation_streams::stream::ConcurrentStream;
-use constellation_streams::stream::PushStreamReporter;
-use constellation_streams::stream::StreamID;
-use constellation_streams::threads::pull::PullStreams;
-use constellation_streams::threads::pull::PullStreamsListenThread;
-use constellation_streams::threads::pull::PullStreamsReporter;
-use constellation_streams::threads::push::private::PrivateDatagramPushMode;
-use constellation_streams::threads::push::PushStreamThread;
+use constellation_streams::config::LargeObjProtoConfig;
+use constellation_streams::large_obj::LargeObjProto;
+use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::large_obj::LargeObjProtoTypes;
+use constellation_streams::threads::poll::PollThreadStartError;
+use constellation_streams::threads::poll::PollThreadStarter;
 use log::debug;
 use log::error;
 use log::info;
 
+use crate::bus::types::UnicastDatagramBusTypes;
+use crate::bus::types::UnicastLargeObjBusTypes;
 use crate::config::UnicastDatagramBusConfig;
+use crate::config::UnicastLargeObjBusConfig;
 
-// ISSUE #2: Need to refactor authn so we can properly handle message
-// authentication.
-
-pub type CompoundUnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    SessionAuth,
-    Xfrm,
-    Ctx
-> = UnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    CompoundFarChannel,
-    CompoundFarChannelThreadedFlows<
-        SessionAuth,
-        UnixDatagramXfrm,
-        UDPDatagramXfrm,
-        FarChannelRegistryID
-    >,
-    SessionAuth,
-    Xfrm,
-    MixedResolver<CompoundFarChannelXfrmPeerAddr, CompoundFarEndpoint>,
-    CompoundFarEndpoint,
-    Ctx
->;
-
-pub struct UnicastDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Ctx
-> where
-    Msg: 'static + Clone + Send,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    SessionAuth: 'static + Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: 'static
-        + Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: 'static + OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        > + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm: 'static +
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Ctx: 'static
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
-    Endpoint: 'static + Send,
-    Resolver: 'static
-        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin: 'static
-        + Clone
-        + Eq
-        + Hash
-        + Into<Option<IPEndpointAddr>>
-        + Send
-        + Sync {
-    endpoint: PhantomData<Endpoint>,
-    push: PushStreamThread<
-        Msgs,
-        StreamSelector<
-            Epochs,
-            FarChannelRegistryChannels<
-                Msg,
-                MsgCodec,
-                PullStreamsReporter<
-                    Msg,
-                    Msg,
-                    ThreadedFlowsPullStreamListener<
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        Msg,
-                        MsgCodec,
-                        StreamID<
-                            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                            F::ChannelID,
-                            Channel::Param
-                        >,
-                        SessionAuth::Prin
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Channel,
-                F,
-                SessionAuth,
-                Xfrm
-            >,
-            Resolver,
-            Ctx
-        >,
-        PrivateDatagramPushMode<
-            Msg,
-            StreamSelector<
-                Epochs,
-                FarChannelRegistryChannels<
-                    Msg,
-                    MsgCodec,
-                    PullStreamsReporter<
-                        Msg,
-                        Msg,
-                        ThreadedFlowsPullStreamListener<
-                            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                            Msg,
-                            MsgCodec,
-                            StreamID<
-                                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                                F::ChannelID,
-                                Channel::Param
-                            >,
-                            SessionAuth::Prin
-                        >,
-                        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                        Recv
-                    >,
-                    Channel,
-                    F,
-                    SessionAuth,
-                    Xfrm
-                >,
-                Resolver,
-                Ctx
-            >,
-            Ctx
-        >,
-        Ctx
-    >,
-    pull: PullStreamsListenThread<
-        Msg,
-        Msg,
-        ThreadedFlowsPullStreamListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
-        >
-    >,
-    reporter: StreamSelectorReporter<
-        Epochs,
-        FarChannelRegistryChannels<
-            Msg,
-            MsgCodec,
-            PullStreamsReporter<
-                Msg,
-                Msg,
-                ThreadedFlowsPullStreamListener<
-                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                    Msg,
-                    MsgCodec,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    SessionAuth::Prin
-                >,
-                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                Recv
-            >,
-            Channel,
-            F,
-            SessionAuth,
-            Xfrm
-        >,
-        Resolver,
-        Ctx
-    >
-}
-
-/// Cleanup object for [UnicastDatagramBus].
-pub struct UnicastDatagramBusCleanup {
-    notify: Notify,
-    sender_join: JoinHandle<()>,
-    pull_join: JoinHandle<()>
-}
-
-/// Type of errors that can occur when creating a [UnicastDatagramBus].
-#[derive(Debug)]
-pub enum UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh> {
-    /// Error acquiring channels.
-    Acquire {
-        /// The error that occurred while acquiring the channels.
-        err: Acquire
-    },
-    /// Error while creating message codecs.
-    MsgCodec {
-        /// The error that occurred while creating message codecs.
-        err: MsgCodec
-    },
-    /// Error while creating [StreamSelector]s.
-    Stream {
-        /// The error that occurred while creating [StreamSelector]s.
-        err: Stream
-    },
-    /// Error while [refresh](StreamSelector::refresh)ing the
-    /// [StreamSelector]s.
-    Refresh { err: Refresh }
-}
-
-impl<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Ctx
-    >
-    UnicastDatagramBus<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Ctx
-    >
+pub struct UnicastDatagramBusStarter<Types, Ctx>
 where
-    Msg: 'static + Clone + Send,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    SessionAuth: 'static
-        + Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: 'static
-        + Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: 'static
-        + OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
+    Types: 'static + UnicastDatagramBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    starter: PollThreadStarter<
+        Ctx,
+        CompoundFarChannelsDatagramSelectorPollTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::Wrapper,
+            Types::Encoder,
+            Types::Decoder,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::MsgAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            Types::Msgs,
+            Types::Recv,
+            Ctx
         >
-        + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    Xfrm: 'static
-        + DatagramXfrm
-        + DatagramXfrmCreate<Addr = Channel::Param>
-        + Send
-        + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Ctx: 'static
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync,
-    Ctx::NameCaches: NSNameCachesCtx,
-    Endpoint: 'static + Send,
-    Resolver: 'static
-        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin: 'static
-        + Clone
-        + Eq
-        + Hash
-        + Into<Option<IPEndpointAddr>>
-        + Send
-        + Sync
+    >
+}
+
+pub struct UnicastDatagramBus<Types, Ctx>
+where
+    Types: UnicastDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>,
+    poll_join: JoinHandle<()>
+}
+
+pub struct UnicastLargeObjBusStarter<Types, Ctx>
+where
+    Types: 'static + UnicastLargeObjBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    starter: PollThreadStarter<
+        Ctx,
+        CompoundFarChannelsLargeObjSelectorPollTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::LargeObjWrapper,
+            Types::LargeObjMsgAuth,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            BusLargeObjTypes<Types, Ctx>,
+            Ctx
+        >
+    >,
+    large_obj_config: LargeObjProtoConfig<
+        Types::EncoderConfig,
+        Types::DecoderConfig,
+        Types::IDsConfig
+    >,
+    proto_auth_config: Types::MsgAuthConfig,
+    hash_config: Types::HashConfig,
+    notify: Notify
+}
+
+pub struct UnicastLargeObjBus<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>,
+    poll_join: JoinHandle<()>
+}
+
+struct BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct BusLargeObjTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+#[derive(Debug)]
+pub enum UnicastLargeObjBusCreateError<Hash, Auth, Proto> {
+    Hash { err: Hash },
+    Start { err: PollThreadStartError },
+    Auth { err: Auth },
+    Proto { err: Proto }
+}
+
+impl<Types, Ctx> MsgAuthNTypes<Types::InMsg> for BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Prin = Types::MsgPrin;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> LargeObjProtoTypes<Types::InMsg, Types::OutMsg>
+    for BusLargeObjTypes<Types, Ctx>
+where
+    Types: UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type AuthNMsg = Types::AuthNMsg;
+    type AuthNTypes = BusMsgAuthNTypes<Types, Ctx>;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type EncodeError = Types::EncodeError;
+    type Encoder = Types::Encoder;
+    type EncoderConfig = Types::EncoderConfig;
+    type Hash = Types::Hash;
+    type HashID = Types::HashID;
+    type IDs = Types::IDs;
+    type IDsConfig = Types::IDsConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Msgs = Types::Msgs;
+    type Prin = Types::MsgPrin;
+    type Recv = Types::Recv;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> UnicastDatagramBusStarter<Types, Ctx>
+where
+    Types: 'static + UnicastDatagramBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send
 {
     pub fn create(
         config: UnicastDatagramBusConfig<
-            ChannelRegistryChannelsConfig<MsgCodec::Param>,
-            Epochs::Config,
-            Endpoint
+            Types::SessionAuthConfig,
+            Types::UnixConfig,
+            Types::UDPConfig,
+            Types::EncoderConfig,
+            Types::DecoderConfig,
+            Types::ResolverConfig,
+            Types::EpochsConfig,
+            Types::MsgAuthConfig
         >,
-        listener: ThreadedFlowsListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
-        >,
-        mut ctx: Ctx,
-        shutdown: ShutdownFlag,
-        sender_notify: Notify,
-        upstream_msg_recv: Recv,
-        msgs: Msgs
-    ) -> Result<
-        Self,
-        UnicastDatagramBusCreateError<
-            FarChannelRegistryAcquireError<
-                RegistryAcquireError<
-                    Channel::AcquireError,
-                    <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
-                    FarChannelFlowsError<
-                        Channel::SocketError,
-                        F::CreateError,
-                        Channel::XfrmError
-                    >,
-                    <Channel::Acquired as FarChannelAcquired>::WrapError
-                >
-            >,
-            MsgCodec::CreateError,
-            StreamSelectorCreateError<
-                FarChannelRegistryChannelsCreateError<MsgCodec::CreateError>,
-                Resolver::CreateError
-            >,
-            ThreadedStreamSelectorError<
-                Resolver::AddrsError,
-                FarChannelRegistryAcquireError<
-                    RegistryAcquireError<
-                        Channel::AcquireError,
-                        <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
-                        FarChannelFlowsError<
-                            Channel::SocketError,
-                            F::CreateError,
-                            Channel::XfrmError
-                        >,
-                        <Channel::Acquired as FarChannelAcquired>::WrapError
-                    >
-                >
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let poll_config = config.take();
+        let (starter, notify) = PollThreadStarter::<
+            Ctx,
+            CompoundFarChannelsDatagramSelectorPollTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
             >
-        >
-    >{
-        info!(target: "unicast-small-obj-bus",
-              "creating unicast comm");
+        >::create(poll_config, None, ctx)?;
 
-        debug!(target: "unicast-small-obj-bus",
-               "initializing channels");
+        Ok((UnicastDatagramBusStarter { starter: starter }, notify))
+    }
 
-        // Bring up all channels.
-        ctx.far_channel_registry()
-            .acquire_all(&mut ctx)
-            .map_err(|err| UnicastDatagramBusCreateError::Acquire {
-                err: err
-            })?;
+    pub fn start(
+        self,
+        recv: Types::Recv,
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
+    ) -> Result<UnicastDatagramBus<Types, Ctx>, PollThreadStartError> {
+        info!(target: "unicast-datagram-bus",
+              "creating unicast datagram bus");
 
-        // Bring up the pull-side.
-        debug!(target: "unicast-small-obj-bus",
-               "initializing pull streams");
-
-        let (party_config, mode_config) = config.take();
-
-        // ISSUE #1: get the codec config properly
-        let msg_codec =
-            MsgCodec::create(MsgCodec::Param::default()).map_err(|err| {
-                UnicastDatagramBusCreateError::MsgCodec { err: err }
-            })?;
-        let listener =
-            ThreadedFlowsPullStreamListener::create(listener, msg_codec);
-        let (pull_streams, pull_listener) = PullStreams::with_capacity(
-            listener,
-            upstream_msg_recv,
-            shutdown.clone(),
-            PassthruMsgAuthN::default(),
-            1
-        );
-        let stream_reporter = pull_streams.reporter();
-
-        // Bring up the push-side.
-        debug!(target: "unicast-small-obj-bus",
-               "initializing push streams");
-
-        let mut stream = StreamSelector::<
-            Epochs,
-            FarChannelRegistryChannels<
-                Msg,
-                MsgCodec,
-                PullStreamsReporter<Msg, _, _, _, _>,
-                Channel,
-                F,
-                SessionAuth,
-                Xfrm
-            >,
-            Resolver,
-            Ctx
-        >::create(
-            &mut ctx,
-            shutdown.clone(),
-            stream_reporter.clone(),
-            party_config
-        )
-        .map_err(|err| UnicastDatagramBusCreateError::Stream { err: err })?;
-
-        // Refresh the streams to ensure no bad stream
-        // reporting.
-        stream.refresh(&mut ctx).map_err(|err| {
-            UnicastDatagramBusCreateError::Refresh { err: err }
-        })?;
-
-        let reporter = stream.reporter();
-        let sender = PushStreamThread::create(
-            mode_config,
-            ctx,
-            msgs,
-            sender_notify.clone(),
-            stream,
-            shutdown.clone()
-        );
+        let UnicastDatagramBusStarter { starter } = self;
+        let poll_join = starter.start(recv, msgs, shutdown)?;
 
         Ok(UnicastDatagramBus {
-            endpoint: PhantomData,
-            reporter: reporter,
-            pull: pull_listener,
-            push: sender
-        })
-    }
-
-    #[inline]
-    pub fn notify(&self) -> Notify {
-        self.push.notify()
-    }
-
-    /// Consume this `UnicastDatagramBus`, start the threads, and return a
-    /// cleanup object.
-    pub fn start(self) -> Result<UnicastDatagramBusCleanup, Error> {
-        let UnicastDatagramBus {
-            pull,
-            push,
-            reporter,
-            ..
-        } = self;
-        let pull_join = pull.start(reporter)?;
-        let notify = push.notify();
-        let sender_join = push.start()?;
-
-        Ok(UnicastDatagramBusCleanup {
-            notify: notify,
-            sender_join: sender_join,
-            pull_join: pull_join
+            types: PhantomData,
+            ctx: PhantomData,
+            poll_join: poll_join
         })
     }
 }
 
-impl UnicastDatagramBusCleanup {
-    pub fn cleanup(self) {
-        if let Err(err) = self.notify.notify() {
-            error!(target: "unicast-small-obj-bus-cleanup",
-                   "error notifying sender: {}",
-                   err)
-        }
-
-        debug!(target: "unicast-small-obj-bus-cleanup",
-               "joining sender");
-
-        if self.sender_join.join().is_err() {
-            error!(target: "unicast-small-obj-bus-cleanup",
-                   "error joining sender")
-        }
-
-        debug!(target: "unicast-small-obj-bus-cleanup",
-               "joining pull streams");
-
-        if self.pull_join.join().is_err() {
-            error!(target: "unicast-small-obj-bus-cleanup",
-                   "error joining pull streams listener")
-        }
-    }
-}
-
-impl<Acquire, MsgCodec, Stream, Refresh> Display
-    for UnicastDatagramBusCreateError<Acquire, MsgCodec, Stream, Refresh>
+impl<Types, Ctx> UnicastDatagramBus<Types, Ctx>
 where
-    Acquire: Display,
-    MsgCodec: Display,
-    Stream: Display,
-    Refresh: Display
+    Types: 'static + UnicastDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    pub fn cleanup(self) {
+        debug!(target: "unicast-datagram-bus-cleanup",
+               "joining poll thread");
+
+        if self.poll_join.join().is_err() {
+            error!(target: "unicast-datagram-bus-cleanup",
+                   "error joining poll thread")
+        }
+    }
+}
+
+impl<Types, Ctx> UnicastLargeObjBusStarter<Types, Ctx>
+where
+    Types: 'static + UnicastLargeObjBusTypes<Ctx> + Send,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    pub fn create(
+        config: UnicastLargeObjBusConfig<
+            Types::HashConfig,
+            Types::SessionAuthConfig,
+            Types::LargeObjMsgAuthConfig,
+            Types::UnixConfig,
+            Types::UDPConfig,
+            Types::EncoderConfig,
+            Types::DecoderConfig,
+            Types::IDsConfig,
+            Types::ResolverConfig,
+            Types::EpochsConfig,
+            Types::MsgAuthConfig
+        >,
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let (poll_config, large_obj_config, proto_auth_config, hash_config) =
+            config.take();
+        let (starter, notify) = PollThreadStarter::<
+            Ctx,
+            CompoundFarChannelsLargeObjSelectorPollTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::LargeObjWrapper,
+                Types::LargeObjMsgAuth,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                BusLargeObjTypes<Types, Ctx>,
+                Ctx
+            >
+        >::create(poll_config, None, ctx)?;
+
+        Ok((
+            UnicastLargeObjBusStarter {
+                proto_auth_config: proto_auth_config,
+                large_obj_config: large_obj_config,
+                hash_config: hash_config,
+                starter: starter,
+                notify: notify.clone()
+            },
+            notify
+        ))
+    }
+
+    pub fn start(
+        self,
+        recv: Types::Recv,
+        msgs: Types::Msgs,
+        shutdown: ShutdownFlag
+    ) -> Result<
+        UnicastLargeObjBus<Types, Ctx>,
+        UnicastLargeObjBusCreateError<
+            Types::HashCreateError,
+            Types::MsgAuthCreateError,
+            LargeObjProtoCreateError<
+                Types::EncoderCreateError,
+                Types::DecoderCreateError,
+                Types::IDsCreateError
+            >
+        >
+    > {
+        info!(target: "unicast-large-obj-bus",
+              "creating unicast large object bus");
+
+        let UnicastLargeObjBusStarter {
+            proto_auth_config,
+            large_obj_config,
+            hash_config,
+            starter,
+            notify
+        } = self;
+        let hash = Types::Hash::create(hash_config)
+            .map_err(|err| UnicastLargeObjBusCreateError::Hash { err: err })?;
+        let msgauth = Types::MsgAuth::create(proto_auth_config)
+            .map_err(|err| UnicastLargeObjBusCreateError::Auth { err: err })?;
+        let large_obj = LargeObjProto::create(
+            large_obj_config,
+            recv,
+            msgs,
+            msgauth,
+            hash,
+            notify
+        )
+        .map_err(|err| UnicastLargeObjBusCreateError::Proto { err: err })?;
+        let large_obj = Arc::new(Mutex::new(large_obj));
+        let poll_join = starter
+            .start(large_obj.clone(), large_obj, shutdown)
+            .map_err(|err| {
+            UnicastLargeObjBusCreateError::Start { err: err }
+        })?;
+
+        Ok(UnicastLargeObjBus {
+            types: PhantomData,
+            ctx: PhantomData,
+            poll_join: poll_join
+        })
+    }
+}
+
+impl<Types, Ctx> UnicastLargeObjBus<Types, Ctx>
+where
+    Types: 'static + UnicastLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    pub fn cleanup(self) {
+        debug!(target: "unicast-large-obj-bus-cleanup",
+               "joining poll thread");
+
+        if self.poll_join.join().is_err() {
+            error!(target: "unicast-large-obj-bus-cleanup",
+                   "error joining poll thread")
+        }
+    }
+}
+
+impl<Hash, Auth, Proto> Display
+    for UnicastLargeObjBusCreateError<Hash, Auth, Proto>
+where
+    Proto: Display,
+    Auth: Display,
+    Hash: Display
 {
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            UnicastDatagramBusCreateError::Acquire { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::MsgCodec { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::Stream { err } => err.fmt(f),
-            UnicastDatagramBusCreateError::Refresh { err } => err.fmt(f)
+            UnicastLargeObjBusCreateError::Proto { err } => err.fmt(f),
+            UnicastLargeObjBusCreateError::Auth { err } => err.fmt(f),
+            UnicastLargeObjBusCreateError::Hash { err } => err.fmt(f),
+            UnicastLargeObjBusCreateError::Start { err } => write!(f, "{}", err)
         }
     }
 }

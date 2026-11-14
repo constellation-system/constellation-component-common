@@ -1,4 +1,4 @@
-// Copyright © 2024-25 The Johns Hopkins Applied Physics Laboratory LLC.
+// Copyright © 2024-26 The Johns Hopkins Applied Physics Laboratory LLC.
 //
 // This program is free software: you can redistribute it and/or
 // modify it under the terms of the GNU Affero General Public License,
@@ -16,10 +16,13 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use constellation_channels::config::CompoundFarDispatchThreadConfig;
+use constellation_channels::config::CompoundFarMulticastPollThreadConfig;
+use constellation_channels::config::CompoundFarSelectorPollThreadConfig;
 use constellation_channels::config::ResolverConfig;
-use constellation_common::retry::Retry;
-use constellation_streams::config::BatchSlotsConfig;
 use constellation_streams::config::DispatchConfig;
+use constellation_streams::config::DispatchThreadConfig;
+use constellation_streams::config::LargeObjProtoConfig;
 use constellation_streams::config::PartyConfig;
 use constellation_streams::config::PrivateDatagramModeConfig;
 use constellation_streams::config::PrivateLargeObjModeConfig;
@@ -28,147 +31,365 @@ use constellation_streams::config::SharedLargeObjModeConfig;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "multicast-datagram-bus")]
+#[derive(
+    Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename = "xact-batch-codec")]
 #[serde(rename_all = "kebab-case")]
-pub struct MulticastDatagramBusConfig<PartyID, Channels, Epochs, Endpoint>
+#[serde(default)]
+pub struct XactBatchCodecConfig<Seal, Payload, Effect, Res, Err>
 where
-    Channels: Default,
-    Epochs: Default {
-    #[serde(flatten)]
+    Seal: Default,
+    Payload: Default,
+    Effect: Default,
+    Res: Default,
+    Err: Default {
     #[serde(default)]
-    slots: BatchSlotsConfig,
-    #[serde(flatten)]
-    parties: PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
-    #[serde(flatten)]
+    seal_codec: Seal,
     #[serde(default)]
-    mode: SharedDatagramModeConfig
+    payload_codec: Payload,
+    #[serde(default)]
+    effect_codec: Effect,
+    #[serde(default)]
+    res_codec: Res,
+    #[serde(default)]
+    err_codec: Err
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "multicast-large-obj-bus")]
-#[serde(rename_all = "kebab-case")]
-pub struct MulticastLargeObjBusConfig<PartyID, Channels, Epochs, Endpoint>
-where
-    Channels: Default,
-    Epochs: Default {
-    #[serde(flatten)]
-    #[serde(default)]
-    slots: BatchSlotsConfig,
-    #[serde(flatten)]
-    parties: PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
-    #[serde(flatten)]
-    #[serde(default)]
-    mode: SharedLargeObjModeConfig
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename = "unicast-datagram-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastDatagramBusConfig<Channels, Epochs, Endpoint>
-where
-    Channels: Default,
-    Epochs: Default {
-    #[serde(flatten)]
-    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-    #[serde(flatten)]
+pub struct DispatchDatagramBusConfig<
+    SessAuth,
+    MsgAuth,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    Epochs
+> where
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default {
+    msg_authn: MsgAuth,
     #[serde(default)]
-    mode: PrivateDatagramModeConfig
+    #[serde(flatten)]
+    dispatch: DispatchConfig<Epochs>,
+    #[serde(flatten)]
+    thread: CompoundFarDispatchThreadConfig<
+        SessAuth,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig
+    >
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "unicast-large-obj-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct DispatchLargeObjBusConfig<
+    Hash,
+    SessAuth,
+    MsgAuth,
+    ProtoAuth,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Epochs
+> where
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    Hash: Default,
+    IDs: Default,
+    UDP: Default {
+    msg_authn: MsgAuth,
+    #[serde(flatten)]
+    dispatch: DispatchConfig<Epochs>,
+    #[serde(flatten)]
+    thread: CompoundFarDispatchThreadConfig<
+        SessAuth,
+        Unix,
+        UDP,
+        (),
+        (),
+        PrivateLargeObjModeConfig
+    >,
+    #[serde(flatten)]
+    large_obj: LargeObjProtoConfig<Enc, Dec, IDs>,
+    large_obj_msg_authn: ProtoAuth,
+    #[serde(default)]
+    hash: Hash
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "multicast-datagram-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct MulticastDatagramBusConfig<
+    Party,
+    AuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default {
+    #[serde(flatten)]
+    thread: CompoundFarMulticastPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        SharedDatagramModeConfig,
+        Party,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
+    >,
+    #[serde(rename = "self")]
+    self_party: Party
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "multicast-large-obj-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct MulticastLargeObjBusConfig<
+    Party,
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
+    Epochs: Default,
+    Resolver: Default,
+    Hash: Default,
+    Enc: Default,
+    Dec: Default,
+    IDs: Default,
+    Unix: Default,
+    UDP: Default {
+    #[serde(flatten)]
+    thread: CompoundFarMulticastPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        (),
+        (),
+        SharedLargeObjModeConfig,
+        Party,
+        Resolver,
+        Epochs,
+        String,
+        ProtoAuthN
+    >,
+    #[serde(flatten)]
+    large_obj: LargeObjProtoConfig<Enc, Dec, IDs>,
+    large_obj_msg_authn: MsgAuthN,
+    #[serde(default)]
+    hash: Hash,
+    #[serde(rename = "self")]
+    self_party: Party
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "unicast-datagram-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct UnicastDatagramBusConfig<
+    AuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default {
+    #[serde(flatten)]
+    thread: CompoundFarSelectorPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
+    >
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "unicast-large-obj-bus")]
+#[serde(rename_all = "kebab-case")]
+pub struct UnicastLargeObjBusConfig<
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+> where
+    Epochs: Default,
+    Resolver: Default,
+    Hash: Default,
+    Enc: Default,
+    Dec: Default,
+    IDs: Default,
+    Unix: Default,
+    UDP: Default {
+    #[serde(flatten)]
+    thread: CompoundFarSelectorPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        (),
+        (),
+        PrivateLargeObjModeConfig,
+        Resolver,
+        Epochs,
+        String,
+        ProtoAuthN
+    >,
+    #[serde(flatten)]
+    large_obj: LargeObjProtoConfig<Enc, Dec, IDs>,
+    large_obj_msg_authn: MsgAuthN,
+    #[serde(default)]
+    hash: Hash
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
-#[serde(rename = "unicast-large-obj-bus")]
+#[serde(rename = "dispatch-bus")]
 #[serde(rename_all = "kebab-case")]
-pub struct UnicastLargeObjBusConfig<Channels, Epochs, Endpoint>
+pub struct DispatchBusConfig<Channels, Epochs, Mode, Auth>
 where
-    Channels: Default,
+    Mode: Default,
     Epochs: Default {
-    #[serde(flatten)]
-    party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-    #[serde(flatten)]
-    #[serde(default)]
-    mode: PrivateLargeObjModeConfig
-}
-
-#[derive(
-    Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize,
-)]
-#[serde(rename = "dispatch-datagram-bus")]
-#[serde(rename_all = "kebab-case")]
-pub struct DispatchDatagramBusConfig<Epochs>
-where
-    Epochs: Default {
-    #[serde(default)]
-    sessions_hint: Option<usize>,
+    auth: Auth,
     #[serde(default)]
     #[serde(flatten)]
     dispatch: DispatchConfig<Epochs>,
     #[serde(flatten)]
-    #[serde(default)]
-    mode: PrivateDatagramModeConfig
-}
-
-#[derive(
-    Clone, Debug, Default, Deserialize, PartialEq, PartialOrd, Serialize,
-)]
-#[serde(rename = "dispatch-large-obj-bus")]
-#[serde(rename_all = "kebab-case")]
-pub struct DispatchLargeObjBusConfig<Epochs>
-where
-    Epochs: Default {
-    #[serde(default)]
-    sessions_hint: Option<usize>,
-    #[serde(default)]
-    #[serde(flatten)]
-    dispatch: DispatchConfig<Epochs>,
-    #[serde(flatten)]
-    #[serde(default)]
-    mode: PrivateLargeObjModeConfig
+    thread: DispatchThreadConfig<Channels, Mode>
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(rename = "static-parties")]
 #[serde(rename_all = "kebab-case")]
-pub struct StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>
+pub struct StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>
 where
-    Channels: Default,
+    Verify: Default,
     Epochs: Default,
     Frags: Default {
     party: PartyID,
     #[serde(flatten)]
-    config: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
+    config: PartyConfig<ResolverConfig, Epochs, String, Verify, Endpoint>,
     #[serde(default)]
     frags: Frags
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, PartialOrd, Serialize)]
 #[serde(untagged)]
-pub enum PartiesConfig<PartyID, Channels, Epochs, Frags, Endpoint>
+pub enum PartiesConfig<PartyID, Epochs, Frags, Verify, Endpoint>
 where
-    Channels: Default,
+    Verify: Default,
     Epochs: Default,
     Frags: Default {
     Static {
         #[serde(rename = "static")]
-        stat:
-            Vec<StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>>
+        stat: Vec<StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>>
     }
 }
 
-impl<Epochs> DispatchLargeObjBusConfig<Epochs>
+impl<Seal, Payload, Effect, Res, Err>
+    XactBatchCodecConfig<Seal, Payload, Effect, Res, Err>
 where
+    Seal: Default,
+    Payload: Default,
+    Effect: Default,
+    Res: Default,
+    Err: Default
+{
+    #[inline]
+    pub fn new(
+        seal_codec: Seal,
+        payload_codec: Payload,
+        effect_codec: Effect,
+        res_codec: Res,
+        err_codec: Err
+    ) -> Self {
+        XactBatchCodecConfig {
+            seal_codec: seal_codec,
+            payload_codec: payload_codec,
+            effect_codec: effect_codec,
+            res_codec: res_codec,
+            err_codec: err_codec
+        }
+    }
+
+    #[inline]
+    pub fn take(self) -> (Seal, Payload, Effect, Res, Err) {
+        (
+            self.seal_codec,
+            self.payload_codec,
+            self.effect_codec,
+            self.res_codec,
+            self.err_codec
+        )
+    }
+}
+
+impl<Channels, Epochs, Mode, Auth>
+    DispatchBusConfig<Channels, Epochs, Mode, Auth>
+where
+    Mode: Default,
     Epochs: Default
 {
     #[inline]
     pub fn create(
-        sessions_hint: Option<usize>,
+        auth: Auth,
         dispatch: DispatchConfig<Epochs>,
-        mode: PrivateLargeObjModeConfig
-    ) -> DispatchLargeObjBusConfig<Epochs> {
-        DispatchLargeObjBusConfig {
-            sessions_hint: sessions_hint,
+        thread: DispatchThreadConfig<Channels, Mode>
+    ) -> DispatchBusConfig<Channels, Epochs, Mode, Auth> {
+        DispatchBusConfig {
             dispatch: dispatch,
-            mode: mode
+            thread: thread,
+            auth: auth
         }
     }
 
@@ -178,241 +399,355 @@ where
     }
 
     #[inline]
-    pub fn sessions_hint(&self) -> Option<usize> {
-        self.sessions_hint
+    pub fn thread(&self) -> &DispatchThreadConfig<Channels, Mode> {
+        &self.thread
     }
 
     #[inline]
-    pub fn mode(&self) -> &PrivateLargeObjModeConfig {
-        &self.mode
+    pub fn auth(&self) -> &Auth {
+        &self.auth
     }
 
     #[inline]
     pub fn take(
         self
     ) -> (
-        Option<usize>,
+        Auth,
         DispatchConfig<Epochs>,
-        PrivateLargeObjModeConfig
+        DispatchThreadConfig<Channels, Mode>
     ) {
-        (self.sessions_hint, self.dispatch, self.mode)
+        (self.auth, self.dispatch, self.thread)
     }
 }
 
-impl<Epochs> DispatchDatagramBusConfig<Epochs>
+impl<SessAuth, MsgAuth, Unix, UDP, Enc, Dec, Epochs>
+    DispatchDatagramBusConfig<SessAuth, MsgAuth, Unix, UDP, Enc, Dec, Epochs>
 where
-    Epochs: Default
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
 {
-    #[inline]
-    pub fn create(
-        sessions_hint: Option<usize>,
-        dispatch: DispatchConfig<Epochs>,
-        mode: PrivateDatagramModeConfig
-    ) -> DispatchDatagramBusConfig<Epochs> {
-        DispatchDatagramBusConfig {
-            sessions_hint: sessions_hint,
-            dispatch: dispatch,
-            mode: mode
-        }
-    }
-
-    #[inline]
-    pub fn dispatch(&self) -> &DispatchConfig<Epochs> {
-        &self.dispatch
-    }
-
-    #[inline]
-    pub fn sessions_hint(&self) -> Option<usize> {
-        self.sessions_hint
-    }
-
-    #[inline]
-    pub fn mode(&self) -> &PrivateDatagramModeConfig {
-        &self.mode
-    }
-
     #[inline]
     pub fn take(
         self
     ) -> (
-        Option<usize>,
+        MsgAuth,
         DispatchConfig<Epochs>,
-        PrivateDatagramModeConfig
+        CompoundFarDispatchThreadConfig<
+            SessAuth,
+            Unix,
+            UDP,
+            Enc,
+            Dec,
+            PrivateDatagramModeConfig
+        >
     ) {
-        (self.sessions_hint, self.dispatch, self.mode)
+        (self.msg_authn, self.dispatch, self.thread)
     }
 }
 
-impl<Channels, Epochs, Endpoint>
-    UnicastDatagramBusConfig<Channels, Epochs, Endpoint>
+impl<Hash, SessAuth, MsgAuth, ProtoAuth, Unix, UDP, Enc, Dec, IDs, Epochs>
+    DispatchLargeObjBusConfig<
+        Hash,
+        SessAuth,
+        MsgAuth,
+        ProtoAuth,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Epochs
+    >
 where
-    Channels: Default,
-    Epochs: Default
+    Epochs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    Hash: Default,
+    IDs: Default,
+    UDP: Default
 {
     #[inline]
-    pub fn create(
-        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-        mode: PrivateDatagramModeConfig
-    ) -> UnicastDatagramBusConfig<Channels, Epochs, Endpoint> {
-        UnicastDatagramBusConfig {
-            party: party,
-            mode: mode
-        }
+    pub fn take(
+        self
+    ) -> (
+        MsgAuth,
+        DispatchConfig<Epochs>,
+        CompoundFarDispatchThreadConfig<
+            SessAuth,
+            Unix,
+            UDP,
+            (),
+            (),
+            PrivateLargeObjModeConfig
+        >,
+        LargeObjProtoConfig<Enc, Dec, IDs>,
+        ProtoAuth,
+        Hash
+    ) {
+        (
+            self.msg_authn,
+            self.dispatch,
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash
+        )
     }
+}
 
+impl<AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
+    UnicastDatagramBusConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
     #[inline]
-    pub fn party(
+    pub fn take(
+        self
+    ) -> CompoundFarSelectorPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        PrivateDatagramModeConfig,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
+    > {
+        self.thread
+    }
+}
+
+impl<
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+>
+    UnicastLargeObjBusConfig<
+        Hash,
+        AuthN,
+        ProtoAuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Hash: Default,
+    IDs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
+    #[inline]
+    pub fn take(
+        self
+    ) -> (
+        CompoundFarSelectorPollThreadConfig<
+            AuthN,
+            Unix,
+            UDP,
+            (),
+            (),
+            PrivateLargeObjModeConfig,
+            Resolver,
+            Epochs,
+            String,
+            ProtoAuthN
+        >,
+        LargeObjProtoConfig<Enc, Dec, IDs>,
+        MsgAuthN,
+        Hash
+    ) {
+        (
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash
+        )
+    }
+}
+
+impl<Party, AuthN, Unix, UDP, Enc, Dec, Resolver, Epochs, MsgAuthN>
+    MulticastDatagramBusConfig<
+        Party,
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
+where
+    Epochs: Default,
+    Resolver: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
+{
+    #[inline]
+    pub fn thread(
         &self
-    ) -> &PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
-        &self.party
+    ) -> &CompoundFarMulticastPollThreadConfig<
+        AuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        SharedDatagramModeConfig,
+        Party,
+        Resolver,
+        Epochs,
+        String,
+        MsgAuthN
+    > {
+        &self.thread
     }
 
     #[inline]
-    pub fn mode(&self) -> &PrivateDatagramModeConfig {
-        &self.mode
+    pub fn self_party(&self) -> &Party {
+        &self.self_party
     }
 
     #[inline]
     pub fn take(
         self
     ) -> (
-        PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-        PrivateDatagramModeConfig
+        CompoundFarMulticastPollThreadConfig<
+            AuthN,
+            Unix,
+            UDP,
+            Enc,
+            Dec,
+            SharedDatagramModeConfig,
+            Party,
+            Resolver,
+            Epochs,
+            String,
+            MsgAuthN
+        >,
+        Party
     ) {
-        (self.party, self.mode)
+        (self.thread, self.self_party)
     }
 }
 
-impl<Channels, Epochs, Endpoint>
-    UnicastLargeObjBusConfig<Channels, Epochs, Endpoint>
+impl<
+    Party,
+    Hash,
+    AuthN,
+    ProtoAuthN,
+    Unix,
+    UDP,
+    Enc,
+    Dec,
+    IDs,
+    Resolver,
+    Epochs,
+    MsgAuthN
+>
+    MulticastLargeObjBusConfig<
+        Party,
+        Hash,
+        AuthN,
+        ProtoAuthN,
+        Unix,
+        UDP,
+        Enc,
+        Dec,
+        IDs,
+        Resolver,
+        Epochs,
+        MsgAuthN
+    >
 where
-    Channels: Default,
-    Epochs: Default
+    Epochs: Default,
+    Resolver: Default,
+    Hash: Default,
+    IDs: Default,
+    Enc: Default,
+    Dec: Default,
+    Unix: Default,
+    UDP: Default
 {
     #[inline]
-    pub fn create(
-        party: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-        mode: PrivateLargeObjModeConfig
-    ) -> UnicastLargeObjBusConfig<Channels, Epochs, Endpoint> {
-        UnicastLargeObjBusConfig {
-            party: party,
-            mode: mode
-        }
-    }
-
-    #[inline]
-    pub fn party(
-        &self
-    ) -> &PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
-        &self.party
-    }
-
-    #[inline]
-    pub fn mode(&self) -> &PrivateLargeObjModeConfig {
-        &self.mode
+    pub fn self_party(&self) -> &Party {
+        &self.self_party
     }
 
     #[inline]
     pub fn take(
         self
     ) -> (
-        PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>,
-        PrivateLargeObjModeConfig
+        CompoundFarMulticastPollThreadConfig<
+            AuthN,
+            Unix,
+            UDP,
+            (),
+            (),
+            SharedLargeObjModeConfig,
+            Party,
+            Resolver,
+            Epochs,
+            String,
+            ProtoAuthN
+        >,
+        LargeObjProtoConfig<Enc, Dec, IDs>,
+        MsgAuthN,
+        Hash,
+        Party
     ) {
-        (self.party, self.mode)
+        (
+            self.thread,
+            self.large_obj,
+            self.large_obj_msg_authn,
+            self.hash,
+            self.self_party
+        )
     }
 }
 
-impl<PartyID, Channels, Epochs, Endpoint>
-    MulticastDatagramBusConfig<PartyID, Channels, Epochs, Endpoint>
+impl<PartyID, Epochs, Frags, Verify, Endpoint>
+    StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint>
 where
-    Channels: Default,
-    Epochs: Default
-{
-    #[inline]
-    pub fn create(
-        slots: BatchSlotsConfig,
-        parties: PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
-        mode: SharedDatagramModeConfig
-    ) -> MulticastDatagramBusConfig<PartyID, Channels, Epochs, Endpoint> {
-        MulticastDatagramBusConfig {
-            slots: slots,
-            parties: parties,
-            mode: mode
-        }
-    }
-
-    #[inline]
-    pub fn parties(
-        &self
-    ) -> &PartiesConfig<PartyID, Channels, Epochs, (), Endpoint> {
-        &self.parties
-    }
-
-    #[inline]
-    pub fn mode(&self) -> &SharedDatagramModeConfig {
-        &self.mode
-    }
-
-    #[inline]
-    pub fn take(
-        self
-    ) -> (
-        BatchSlotsConfig,
-        PartiesConfig<PartyID, Channels, Epochs, (), Endpoint>,
-        SharedDatagramModeConfig
-    ) {
-        (self.slots, self.parties, self.mode)
-    }
-}
-
-impl<PartyID, Channels, Epochs, Endpoint>
-    MulticastLargeObjBusConfig<PartyID, Channels, Epochs, Endpoint>
-where
-    Channels: Default,
-    Epochs: Default
-{
-    #[inline]
-    pub fn create(
-        slots: BatchSlotsConfig,
-        parties: PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
-        mode: SharedLargeObjModeConfig
-    ) -> MulticastLargeObjBusConfig<PartyID, Channels, Epochs, Endpoint> {
-        MulticastLargeObjBusConfig {
-            slots: slots,
-            parties: parties,
-            mode: mode
-        }
-    }
-
-    #[inline]
-    pub fn parties(
-        &self
-    ) -> &PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint> {
-        &self.parties
-    }
-
-    #[inline]
-    pub fn mode(&self) -> &SharedLargeObjModeConfig {
-        &self.mode
-    }
-
-    #[inline]
-    pub fn take(
-        self
-    ) -> (
-        BatchSlotsConfig,
-        PartiesConfig<PartyID, Channels, Epochs, Retry, Endpoint>,
-        SharedLargeObjModeConfig
-    ) {
-        (self.slots, self.parties, self.mode)
-    }
-}
-
-impl<PartyID, Channels, Epochs, Frags, Endpoint>
-    StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint>
-where
-    Channels: Default,
+    Verify: Default,
     Epochs: Default,
     Frags: Default
 {
@@ -420,8 +755,8 @@ where
     pub fn create(
         party: PartyID,
         frags: Frags,
-        config: PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
-    ) -> StaticPartyConfig<PartyID, Channels, Epochs, Frags, Endpoint> {
+        config: PartyConfig<ResolverConfig, Epochs, String, Verify, Endpoint>
+    ) -> StaticPartyConfig<PartyID, Epochs, Frags, Verify, Endpoint> {
         StaticPartyConfig {
             party: party,
             frags: frags,
@@ -442,7 +777,7 @@ where
     #[inline]
     pub fn party_config(
         &self
-    ) -> &PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint> {
+    ) -> &PartyConfig<ResolverConfig, Epochs, String, Verify, Endpoint> {
         &self.config
     }
 
@@ -452,7 +787,7 @@ where
     ) -> (
         PartyID,
         Frags,
-        PartyConfig<ResolverConfig, Channels, Epochs, String, Endpoint>
+        PartyConfig<ResolverConfig, Epochs, String, Verify, Endpoint>
     ) {
         (self.party, self.frags, self.config)
     }

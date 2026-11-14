@@ -1,4 +1,4 @@
-// Copyright © 2024-25 The Johns Hopkins Applied Physics Laboratory LLC.
+// Copyright © 2024-26 The Johns Hopkins Applied Physics Laboratory LLC.
 //
 // This program is free software: you can redistribute it and/or
 // modify it under the terms of the GNU Affero General Public License,
@@ -16,760 +16,780 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::hash::Hash;
 use std::io::Error;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 
-use constellation_auth::authn::AuthNMsgRecv;
-use constellation_auth::authn::PassthruMsgAuthN;
-use constellation_auth::authn::SessionAuthN;
-use constellation_channels::config::ResolverConfig;
-use constellation_channels::far::flows::OwnedFlowNegotiator;
-use constellation_channels::far::flows::OwnedFlowsCreate;
-use constellation_channels::far::flows::ThreadedFlowsListener;
-use constellation_channels::far::flows::ThreadedFlowsPullStreamListener;
-use constellation_channels::far::registry::FarChannelRegistryAcquireError;
-use constellation_channels::far::registry::FarChannelRegistryCtx;
-use constellation_channels::far::registry::RegistryAcquireError;
-use constellation_channels::far::FarChannelAcquired;
-use constellation_channels::far::FarChannelAcquiredResolve;
-use constellation_channels::far::FarChannelCreate;
-use constellation_channels::far::FarChannelFlowsError;
-use constellation_channels::far::FarChannelOwnedFlows;
+use constellation_auth::authn::MsgAuthNTypes;
+use constellation_channels::far::channels::CompoundFarChannels;
+use constellation_channels::far::types::CompoundFarChannelsDatagramDispatchTypes;
+use constellation_channels::far::types::CompoundFarChannelsLargeObjDispatchTypes;
 use constellation_channels::resolve::cache::NSNameCachesCtx;
-use constellation_common::codec::Codec;
-use constellation_common::codec::DatagramCodec;
-use constellation_common::ids::IDGen;
-use constellation_common::net::DatagramXfrm;
-use constellation_common::net::DatagramXfrmCreate;
-use constellation_common::net::IPEndpointAddr;
-use constellation_common::net::PrivateMsgs;
-use constellation_common::net::Socket;
-use constellation_common::sched::RefreshError;
+use constellation_common::codec::Decoder;
+use constellation_common::config::Create;
+use constellation_common::config::CreateWithParam;
+use constellation_common::error::ErrorScope;
+use constellation_common::error::ScopedError;
+use constellation_common::error::WithMutexPoison;
 use constellation_common::shutdown::ShutdownFlag;
 use constellation_common::sync::Notify;
-use constellation_streams::addrs::Addrs;
-use constellation_streams::addrs::AddrsCreate;
-use constellation_streams::channels::ChannelParam;
-use constellation_streams::codec::DatagramCodecStream;
+use constellation_common::sync::NotifyFlag;
 use constellation_streams::config::DispatchConfig;
+use constellation_streams::config::LargeObjProtoConfig;
+use constellation_streams::large_obj::LargeObjMsg;
+use constellation_streams::large_obj::LargeObjMsgCodec;
+use constellation_streams::large_obj::LargeObjProto;
+use constellation_streams::large_obj::LargeObjProtoCreateError;
+use constellation_streams::large_obj::LargeObjProtoTypes;
 use constellation_streams::select::dispatch::DispatchSelector;
-use constellation_streams::stream::ConcurrentStream;
-use constellation_streams::stream::StreamID;
-use constellation_streams::stream::ThreadedStream;
+use constellation_streams::select::dispatch::DispatchSelectorCreateError;
 use constellation_streams::threads::dispatch::Dispatch;
-use constellation_streams::threads::dispatch::DispatchEntryReporter;
+use constellation_streams::threads::dispatch::DispatchThreadCtx;
+use constellation_streams::threads::dispatch::DispatchThreadStarter;
 use constellation_streams::threads::dispatch::Dispatched;
-use constellation_streams::threads::dispatch::PullStreamsDispatchThread;
-use constellation_streams::threads::push::private::PrivateDatagramPushMode;
 use log::debug;
 use log::error;
+use log::info;
 
+use crate::bus::types::DispatchDatagramBusTypes;
+use crate::bus::types::DispatchLargeObjBusTypes;
+use crate::bus::types::SessionDispatchTypes;
 use crate::config::DispatchDatagramBusConfig;
+use crate::config::DispatchLargeObjBusConfig;
 
-pub trait SessionDispatch<Msg, Msgs, Prin, Recv>
+/// Trait for application-level session dispatch.
+pub trait SessionDispatch<Types>
 where
-    Msgs: PrivateMsgs<Msg> + Send,
-    Recv: AuthNMsgRecv<Prin, Msg> {
-    type SessionError: Display;
+    Types: SessionDispatchTypes {
+    /// Type of errors that can occur dispatching a session.
+    type SessionError: Debug + Display + ScopedError;
 
+    /// Dispatch a new session.
+    ///
+    /// # Parameters
+    ///
+    /// - `prin`: The principal for which the session is being created.
+    ///
+    /// - `shutdown`: The [ShutdownFlag] from which to derive this session's
+    ///   `ShutdownFlag`.
+    ///
+    /// - `notify`: The [Notify] to use to signal available messages.
     fn session(
         &self,
-        prin: Prin
-    ) -> Result<(ShutdownFlag, Msgs, Notify, Recv), Self::SessionError>;
+        prin: &Types::SessionPrin,
+        shutdown: ShutdownFlag,
+        notify: NotifyFlag
+    ) -> Result<(ShutdownFlag, Types::Msgs, Types::Recv), Self::SessionError>;
 }
 
-/// Type of errors that can occur when creating a [DispatchDatagramBus].
 #[derive(Debug)]
-pub enum DispatchError<Session> {
+pub enum DatagramDispatchError<Session, Stream, Auth> {
     /// Error acquiring session.
     Session {
         /// The error that occurred while acquiring the session.
         err: Session
     },
+    /// Error creating message authenticator.
+    Auth {
+        /// The error that occurred while creating the message authenticator.
+        err: Auth
+    },
     /// Error while creating [DispatchSelector]s.
     Stream {
         /// The error that occurred while creating [StreamSelector]s.
-        err: RefreshError
+        err: Stream
     }
 }
-
-/// Type of errors that can occur when creating a [DispatchDatagramBus].
 #[derive(Debug)]
-pub enum DispatchDatagramBusCreateError<MsgCodec, Acquire> {
-    /// Error while creating message codecs.
-    MsgCodec {
-        /// The error that occurred while creating message codecs.
-        err: MsgCodec
+pub enum LargeObjDispatchError<Session, Stream, Hash, ProtoAuth, Auth, Proto> {
+    /// Error acquiring session.
+    Session {
+        /// The error that occurred while acquiring the session.
+        err: Session
     },
-    Acquire {
-        err: Acquire
+    /// Error creating message authenticator.
+    Auth {
+        /// The error that occurred while creating the message authenticator.
+        err: Auth
+    },
+    /// Error creating message authenticator.
+    ProtoAuth {
+        /// The error that occurred while creating the message authenticator.
+        err: ProtoAuth
+    },
+    /// Error creating protocol instance.
+    Proto {
+        /// The error that occurred while creating the protocol instance.
+        err: Proto
+    },
+    /// Error creating hash algorithm.
+    Hash {
+        /// The error that occurred while creating the hash algorithm.
+        err: Hash
+    },
+    /// Error while creating [DispatchSelector]s.
+    Stream {
+        /// The error that occurred while creating [StreamSelector]s.
+        err: Stream
     }
 }
 
-/// Cleanup object for [UnicastComm].
-pub struct DispatchDatagramBusCleanup {
-    pull_join: JoinHandle<()>
-}
-
-pub struct DispatchDatagramBus<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Session,
-    Ctx
-> where
-    Msg: 'static + Clone + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Epochs::Config: Clone + Send,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        > + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    SessionAuth: Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    Xfrm:
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Resolver: Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin:
-        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
-    Endpoint: Send,
-    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv> + Send,
-    Ctx: 'static
-        + Clone
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync {
-    pull: PullStreamsDispatchThread<
-        Msg,
-        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-        Dispatcher<
-            Msg,
-            MsgCodec,
-            Msgs,
-            Recv,
-            Epochs,
-            Channel,
-            F,
-            SessionAuth,
-            Xfrm,
-            Resolver,
-            Endpoint,
-            Session,
-            Ctx
-        >,
-        ThreadedFlowsPullStreamListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            Msg,
-            MsgCodec,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
-        >,
-        PrivateDatagramPushMode<
-            Msg,
-            DispatchSelector<
-                Epochs,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                ThreadedStream<
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >
-                >,
-                DispatchEntryReporter<
-                    Msg,
-                    StreamID<
-                        <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                        F::ChannelID,
-                        Channel::Param
-                    >,
-                    DatagramCodecStream<
-                        Msg,
-                        <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                        MsgCodec
-                    >,
-                    PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                    Recv
-                >,
-                Ctx
-            >,
+pub struct DispatchDatagramBusStarter<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    auth_config: Types::MsgAuthConfig,
+    starter: DispatchThreadStarter<
+        CompoundFarChannelsDatagramDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::Wrapper,
+            Types::Encoder,
+            Types::Decoder,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::MsgAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            Types::Msgs,
+            Types::Recv,
             Ctx
         >,
         Ctx
     >
 }
 
-struct Dispatcher<
-    Msg,
-    MsgCodec,
-    Msgs,
-    Recv,
-    Epochs,
-    Channel,
-    F,
-    SessionAuth,
-    Xfrm,
-    Resolver,
-    Endpoint,
-    Session,
-    Ctx
-> where
-    Msg: 'static + Clone + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        > + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    SessionAuth: Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    Xfrm:
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Resolver: Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin:
-        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
-    Endpoint: Send,
-    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv>,
-    Ctx: FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync {
-    msg: PhantomData<Msg>,
-    codec: PhantomData<MsgCodec>,
-    msgs: PhantomData<Msgs>,
-    recv: PhantomData<Recv>,
-    channel: PhantomData<Channel>,
-    flows: PhantomData<F>,
-    auth: PhantomData<SessionAuth>,
-    xfrm: PhantomData<Xfrm>,
-    resolver: PhantomData<Resolver>,
-    endpoint: PhantomData<Endpoint>,
+pub struct DispatchDatagramBus<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
     ctx: PhantomData<Ctx>,
-    session: Session,
-    config: DispatchConfig<Epochs::Config>
+    join_handle: JoinHandle<()>
 }
 
-impl<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Session,
-        Ctx
-    >
-    DispatchDatagramBus<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Session,
-        Ctx
-    >
+pub struct DispatchLargeObjBusStarter<Types, Ctx>
 where
-    Msg: 'static + Clone + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Epochs::Config: Clone + Send,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: 'static
-        + OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        >
-        + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    SessionAuth: 'static
-        + Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    Xfrm: 'static
-        + DatagramXfrm
-        + DatagramXfrmCreate<Addr = Channel::Param>
-        + Send
-        + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Resolver: 'static
-        + Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin:
-        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
-    Endpoint: 'static + Send,
-    Session:
-        'static + SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv> + Send,
-    Ctx: 'static
-        + Clone
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync
-{
-    pub fn create(
-        config: DispatchDatagramBusConfig<Epochs::Config>,
-        session: Session,
-        listener: ThreadedFlowsListener<
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            SessionAuth::Prin
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    proto_config: LargeObjProtoConfig<
+        Types::EncoderConfig,
+        Types::DecoderConfig,
+        Types::IDsConfig
+    >,
+    proto_auth_config: Types::LargeObjMsgAuthConfig,
+    msg_auth_config: Types::MsgAuthConfig,
+    hash_config: Types::HashConfig,
+    starter: DispatchThreadStarter<
+        CompoundFarChannelsLargeObjDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::LargeObjWrapper,
+            Types::LargeObjMsgAuth,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            BusLargeObjTypes<Types, Ctx>,
+            Ctx
         >,
-        shutdown: ShutdownFlag,
-        mut ctx: Ctx
-    ) -> Result<
-        Self,
-        DispatchDatagramBusCreateError<
-            MsgCodec::CreateError,
-            FarChannelRegistryAcquireError<
-                RegistryAcquireError<
-                    Channel::AcquireError,
-                    <Channel::Acquired as FarChannelAcquiredResolve>::ResolverError,
-                    FarChannelFlowsError<
-                        Channel::SocketError,
-                        F::CreateError,
-                        Channel::XfrmError
-                    >,
-                    <Channel::Acquired as FarChannelAcquired>::WrapError
-                >
-            >
-        >
-    >{
-        let (size_hint, dispatch_config, mode_config) = config.take();
-
-        debug!(target: "multicast-comm",
-               "initializing channels");
-
-        // Bring up all channels.
-        ctx.far_channel_registry()
-            .acquire_all(&mut ctx)
-            .map_err(|err| DispatchDatagramBusCreateError::Acquire {
-                err: err
-            })?;
-
-        let dispatcher = Dispatcher {
-            msg: PhantomData,
-            codec: PhantomData,
-            msgs: PhantomData,
-            recv: PhantomData,
-            channel: PhantomData,
-            flows: PhantomData,
-            auth: PhantomData,
-            xfrm: PhantomData,
-            resolver: PhantomData,
-            endpoint: PhantomData,
-            ctx: PhantomData,
-            session: session,
-            config: dispatch_config
-        };
-        // ISSUE #1: get the codec config properly
-        let msg_codec =
-            MsgCodec::create(MsgCodec::Param::default()).map_err(|err| {
-                DispatchDatagramBusCreateError::MsgCodec { err: err }
-            })?;
-        let listener =
-            ThreadedFlowsPullStreamListener::create(listener, msg_codec);
-        let pull = match size_hint {
-            Some(size_hint) => PullStreamsDispatchThread::with_capacity(
-                mode_config,
-                dispatcher,
-                listener,
-                shutdown,
-                ctx,
-                size_hint
-            ),
-            None => PullStreamsDispatchThread::new(
-                mode_config,
-                dispatcher,
-                listener,
-                shutdown,
-                ctx
-            )
-        };
-
-        Ok(DispatchDatagramBus { pull: pull })
-    }
-
-    /// Consume this `DispatchDatagramBus`, start the threads, and return a
-    /// cleanup object.
-    pub fn start(self) -> Result<DispatchDatagramBusCleanup, Error> {
-        let DispatchDatagramBus { pull } = self;
-        let pull_join = pull.start()?;
-
-        Ok(DispatchDatagramBusCleanup {
-            pull_join: pull_join
-        })
-    }
-}
-
-impl<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Session,
         Ctx
     >
+}
+
+pub struct DispatchLargeObjBus<Types, Ctx>
+where
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>,
+    join_handle: JoinHandle<()>
+}
+
+struct BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct BusLargeObjTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    types: PhantomData<Types>,
+    ctx: PhantomData<Ctx>
+}
+
+struct DatagramDispatcher<Types, SessionDisp, Ctx>
+where
+    SessionDisp: SessionDispatch<Types::DispTypes>,
+    Types: DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    dispatch_config: DispatchConfig<Types::EpochsConfig>,
+    auth_config: Types::MsgAuthConfig,
+    session: SessionDisp
+}
+
+struct LargeObjDispatcher<Types, SessionDisp, Ctx>
+where
+    SessionDisp: SessionDispatch<Types::DispTypes>,
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send {
+    session: SessionDisp,
+    config: DispatchConfig<Types::EpochsConfig>,
+    proto_config: LargeObjProtoConfig<
+        Types::EncoderConfig,
+        Types::DecoderConfig,
+        Types::IDsConfig
+    >,
+    proto_auth_config: Types::LargeObjMsgAuthConfig,
+    msg_auth_config: Types::MsgAuthConfig,
+    hash_config: Types::HashConfig
+}
+
+impl<Types, Ctx> MsgAuthNTypes<Types::InMsg> for BusMsgAuthNTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Prin = Types::MsgPrin;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, Ctx> LargeObjProtoTypes<Types::InMsg, Types::OutMsg>
+    for BusLargeObjTypes<Types, Ctx>
+where
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type AuthNError = Types::MsgAuthError;
+    type AuthNMsg = Types::AuthNMsg;
+    type AuthNTypes = BusMsgAuthNTypes<Types, Ctx>;
+    type DecodeError = <Types::Decoder as Decoder<Types::Wrapper>>::DecodeError;
+    type Decoder = Types::Decoder;
+    type DecoderConfig = Types::DecoderConfig;
+    type EncodeError = Types::EncodeError;
+    type Encoder = Types::Encoder;
+    type EncoderConfig = Types::EncoderConfig;
+    type Hash = Types::Hash;
+    type HashID = Types::HashID;
+    type IDs = Types::IDs;
+    type IDsConfig = Types::IDsConfig;
+    type MsgAuthN = Types::MsgAuth;
+    type Msgs = Types::Msgs;
+    type Prin = Types::MsgPrin;
+    type Recv = Types::Recv;
+    type SessionPrin = Types::SessionPrin;
+    type Wrapper = Types::Wrapper;
+}
+
+impl<Types, SessionDisp, Ctx>
     Dispatch<
-        Msg,
-        StreamID<
-            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-            F::ChannelID,
-            Channel::Param
+        CompoundFarChannelsDatagramDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::Wrapper,
+            Types::Encoder,
+            Types::Decoder,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::MsgAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            Types::Msgs,
+            Types::Recv,
+            Ctx
         >,
-        DatagramCodecStream<
-            Msg,
-            <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-            MsgCodec
-        >,
-        PassthruMsgAuthN<Msg, SessionAuth::Prin>,
         Ctx
-    >
-    for Dispatcher<
-        Msg,
-        MsgCodec,
-        Msgs,
-        Recv,
-        Epochs,
-        Channel,
-        F,
-        SessionAuth,
-        Xfrm,
-        Resolver,
-        Endpoint,
-        Session,
-        Ctx
-    >
+    > for DatagramDispatcher<Types, SessionDisp, Ctx>
 where
-    Msg: 'static + Clone + Send,
-    MsgCodec: 'static + Clone + DatagramCodec<Msg> + Send,
-    <MsgCodec as Codec<Msg>>::Param: Default,
-    Msgs: 'static + PrivateMsgs<Msg> + Send,
-    Recv: 'static + AuthNMsgRecv<SessionAuth::Prin, Msg> + Clone + Send,
-    Epochs: 'static + IDGen + Iterator<Item = u128> + Send + Sync,
-    Epochs::Config: Clone,
-    Channel: 'static
-        + FarChannelOwnedFlows<F, SessionAuth, Xfrm>
-        + FarChannelCreate
-        + Send
-        + Sync,
-    Channel::Acquired: FarChannelAcquiredResolve<Resolved = Channel::Param>,
-    Channel::Param: Clone
-        + Display
-        + Eq
-        + Hash
-        + PartialEq
-        + ChannelParam<<Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + Send
-        + Sync,
-    Channel::Acquired:
-        FarChannelAcquiredResolve<Resolved = Channel::Param> + Send + Sync,
-    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow:
-        'static + ConcurrentStream + Send,
-    <Channel::Xfrm as DatagramXfrm>::PeerAddr:
-        'static + Eq + Hash + Send + Sync,
-    F: OwnedFlowsCreate<
-            Channel::Socket,
-            Channel::Nego,
-            SessionAuth,
-            Channel::Xfrm
-        > + Send,
-    F::Flow: 'static + ConcurrentStream + Send,
-    F::CreateParam: Clone + Default + Send + Sync,
-    F::Reporter: Clone + Send + Sync,
-    F::ChannelID: 'static + From<usize> + Into<usize> + Send + Sync,
-    SessionAuth: Clone
-        + SessionAuthN<<Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow>
-        + Send
-        + Sync,
-    SessionAuth::Prin: 'static + Clone + Display + Eq + Hash + Send,
-    Xfrm:
-        DatagramXfrm + DatagramXfrmCreate<Addr = Channel::Param> + Send + Sync,
-    Xfrm::CreateParam: Clone + Default + Send + Sync,
-    Xfrm::LocalAddr: From<<Channel::Socket as Socket>::Addr>,
-    Resolver: Addrs<Addr = <Channel::Xfrm as DatagramXfrm>::PeerAddr>
-        + AddrsCreate<Ctx, Vec<Endpoint>, Config = ResolverConfig>
-        + Send
-        + Sync,
-    Resolver::Origin:
-        Clone + Eq + Hash + Into<Option<IPEndpointAddr>> + Send + Sync,
-    Endpoint: Send,
-    Session: SessionDispatch<Msg, Msgs, SessionAuth::Prin, Recv>,
-    Ctx: 'static
-        + FarChannelRegistryCtx<Channel, F, SessionAuth, Xfrm>
-        + NSNameCachesCtx
-        + Send
-        + Sync
+    SessionDisp: SessionDispatch<Types::DispTypes>,
+    Types: DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
 {
-    type DispatchError = DispatchError<Session::SessionError>;
-    type Msgs = Msgs;
-    type PushStream = DispatchSelector<
-        Epochs,
-        StreamID<
-            <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-            F::ChannelID,
-            Channel::Param
-        >,
-        ThreadedStream<
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >
-        >,
-        DispatchEntryReporter<
-            Msg,
-            StreamID<
-                <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                F::ChannelID,
-                Channel::Param
-            >,
-            DatagramCodecStream<
-                Msg,
-                <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                MsgCodec
-            >,
-            PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-            Recv
-        >,
-        Ctx
+    type DispatchError = DatagramDispatchError<
+        SessionDisp::SessionError,
+        DispatchSelectorCreateError<Types::EpochsCreateError>,
+        Types::MsgAuthCreateError
     >;
-    type Recv = Recv;
 
     /// Obtain the components of a new private session.
     fn dispatch(
         &mut self,
-        _ctx: &mut Ctx,
-        prin: SessionAuth::Prin
+        ctx: &mut DispatchThreadCtx<
+            CompoundFarChannels<
+                Types::SessionAuth,
+                Types::AuthNChan,
+                Types::Unix,
+                Types::UDP,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder
+            >,
+            Ctx
+        >,
+        prin: &Types::SessionPrin,
+        shutdown: ShutdownFlag,
+        notify: NotifyFlag
     ) -> Result<
-        (
-            Self::PushStream,
-            Self::Msgs,
-            Notify,
-            Dispatched<
-                Msg,
-                StreamID<
-                    <Channel::Xfrm as DatagramXfrm>::PeerAddr,
-                    F::ChannelID,
-                    Channel::Param
-                >,
-                DatagramCodecStream<
-                    Msg,
-                    <Channel::Nego as OwnedFlowNegotiator<F::Flow>>::Flow,
-                    MsgCodec
-                >,
-                PassthruMsgAuthN<Msg, SessionAuth::Prin>,
-                Self::Recv
-            >
-        ),
+        Dispatched<
+            CompoundFarChannelsDatagramDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
+            >,
+            Ctx
+        >,
         Self::DispatchError
     > {
-        let (shutdown, msgs, notify, recv) = self
+        let (shutdown, msgs, recv) = self
             .session
-            .session(prin)
-            .map_err(|err| DispatchError::Session { err: err })?;
-        let dispatched =
-            Dispatched::new(shutdown, PassthruMsgAuthN::default(), recv);
-        let reporter = dispatched.reporter();
-        let stream = DispatchSelector::create(reporter, self.config.clone())
-            .map_err(|err| DispatchError::Stream { err: err })?;
+            .session(prin, shutdown, notify)
+            .map_err(|err| DatagramDispatchError::Session { err: err })?;
+        let stream =
+            DispatchSelector::create(self.dispatch_config.clone(), ctx)
+                .map_err(|err| DatagramDispatchError::Stream { err: err })?;
+        let authn = Types::MsgAuth::create(self.auth_config.clone())
+            .map_err(|err| DatagramDispatchError::Auth { err: err })?;
+        let dispatched = Dispatched::new(shutdown, stream, msgs, authn, recv);
 
-        Ok((stream, msgs, notify, dispatched))
+        Ok(dispatched)
     }
 }
 
-impl DispatchDatagramBusCleanup {
+impl<Types, SessionDisp, Ctx>
+    Dispatch<
+        CompoundFarChannelsLargeObjDispatchTypes<
+            Types::InMsg,
+            Types::OutMsg,
+            Types::LargeObjWrapper,
+            Types::LargeObjMsgAuth,
+            Types::AuthNChan,
+            Types::SessionAuth,
+            Types::Unix,
+            Types::UDP,
+            Types::Epochs,
+            Types::Resolver,
+            BusLargeObjTypes<Types, Ctx>,
+            Ctx
+        >,
+        Ctx
+    > for LargeObjDispatcher<Types, SessionDisp, Ctx>
+where
+    SessionDisp: SessionDispatch<Types::DispTypes>,
+    Types: DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    type DispatchError = LargeObjDispatchError<
+        SessionDisp::SessionError,
+        DispatchSelectorCreateError<Types::EpochsCreateError>,
+        Types::HashCreateError,
+        Types::LargeObjMsgAuthCreateError,
+        Types::MsgAuthCreateError,
+        LargeObjProtoCreateError<
+            Types::EncoderCreateError,
+            Types::DecoderCreateError,
+            Types::IDsCreateError
+        >
+    >;
+
+    /// Obtain the components of a new private session.
+    fn dispatch(
+        &mut self,
+        ctx: &mut DispatchThreadCtx<
+            CompoundFarChannels<
+                Types::SessionAuth,
+                Types::AuthNChan,
+                Types::Unix,
+                Types::UDP,
+                LargeObjMsg<Types::HashID>,
+                LargeObjMsg<Types::HashID>,
+                LargeObjMsgCodec<Types::Hash>,
+                LargeObjMsgCodec<Types::Hash>
+            >,
+            Ctx
+        >,
+        prin: &Types::SessionPrin,
+        shutdown: ShutdownFlag,
+        notify: NotifyFlag
+    ) -> Result<
+        Dispatched<
+            CompoundFarChannelsLargeObjDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::LargeObjWrapper,
+                Types::LargeObjMsgAuth,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                BusLargeObjTypes<Types, Ctx>,
+                Ctx
+            >,
+            Ctx
+        >,
+        Self::DispatchError
+    > {
+        let (shutdown, msgs, recv) = self
+            .session
+            .session(prin, shutdown, notify.clone())
+            .map_err(|err| LargeObjDispatchError::Session { err: err })?;
+        let hash = Types::Hash::create(self.hash_config.clone())
+            .map_err(|err| LargeObjDispatchError::Hash { err: err })?;
+        let stream = DispatchSelector::create(self.config.clone(), ctx)
+            .map_err(|err| LargeObjDispatchError::Stream { err: err })?;
+        let authn = Types::MsgAuth::create(self.msg_auth_config.clone())
+            .map_err(|err| LargeObjDispatchError::Auth { err: err })?;
+        let large_obj = LargeObjProto::create(
+            self.proto_config.clone(),
+            recv,
+            msgs,
+            authn,
+            hash,
+            notify.into()
+        )
+        .map_err(|err| LargeObjDispatchError::Proto { err: err })?;
+        let large_obj = Arc::new(Mutex::new(large_obj));
+        let proto_authn =
+            Types::LargeObjMsgAuth::create(self.proto_auth_config.clone())
+                .map_err(|err| LargeObjDispatchError::ProtoAuth { err: err })?;
+        let dispatched = Dispatched::new(
+            shutdown,
+            stream,
+            large_obj.clone(),
+            proto_authn,
+            large_obj
+        );
+
+        Ok(dispatched)
+    }
+}
+
+impl<Types, Ctx> DispatchDatagramBusStarter<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    pub fn create(
+        config: DispatchDatagramBusConfig<
+            Types::SessionAuthConfig,
+            Types::MsgAuthConfig,
+            Types::UnixConfig,
+            Types::UDPConfig,
+            Types::EncoderConfig,
+            Types::DecoderConfig,
+            Types::EpochsConfig
+        >,
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let (auth_config, dispatch_config, thread_config) = config.take();
+        let (starter, notify) = DispatchThreadStarter::<
+            CompoundFarChannelsDatagramDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::Wrapper,
+                Types::Encoder,
+                Types::Decoder,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::MsgAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                Types::Msgs,
+                Types::Recv,
+                Ctx
+            >,
+            _
+        >::create(thread_config, ctx)?;
+
+        Ok((
+            DispatchDatagramBusStarter {
+                dispatch_config: dispatch_config,
+                auth_config: auth_config,
+                starter: starter
+            },
+            notify
+        ))
+    }
+
+    pub fn start<SessionDisp>(
+        self,
+        session: SessionDisp,
+        shutdown: ShutdownFlag
+    ) -> Result<DispatchDatagramBus<Types, Ctx>, WithMutexPoison<Error>>
+    where
+        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
+        info!(target: "dispatch-datagram-bus",
+              "creating dispatch bus");
+
+        let DispatchDatagramBusStarter {
+            auth_config,
+            dispatch_config,
+            starter
+        } = self;
+
+        let dispatcher: DatagramDispatcher<Types, SessionDisp, _> =
+            DatagramDispatcher {
+                dispatch_config: dispatch_config,
+                auth_config: auth_config,
+                session: session
+            };
+        let join_handle = starter.start(dispatcher, shutdown)?;
+
+        Ok(DispatchDatagramBus {
+            types: PhantomData,
+            ctx: PhantomData,
+            join_handle: join_handle
+        })
+    }
+}
+
+impl<Types, Ctx> DispatchDatagramBus<Types, Ctx>
+where
+    Types: 'static + DispatchDatagramBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
     pub fn cleanup(self) {
         debug!(target: "dispatch-bus-cleanup",
                "joining pull streams");
 
-        // XXX this won't stop the pull threads properly, but we need
-        // the non-blocking I/O refactor to do that properly.
-
-        if self.pull_join.join().is_err() {
+        if self.join_handle.join().is_err() {
             error!(target: "dispatch-bus-cleanup",
                    "error joining pull streams listener")
         }
     }
 }
 
-impl<Session> Display for DispatchError<Session>
+impl<Types, Ctx> DispatchLargeObjBusStarter<Types, Ctx>
 where
-    Session: Display
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
 {
-    fn fmt(
-        &self,
-        f: &mut Formatter<'_>
-    ) -> Result<(), std::fmt::Error> {
-        match self {
-            DispatchError::Session { err } => err.fmt(f),
-            DispatchError::Stream { err } => err.fmt(f)
+    pub fn create(
+        config: DispatchLargeObjBusConfig<
+            Types::HashConfig,
+            Types::SessionAuthConfig,
+            Types::MsgAuthConfig,
+            Types::LargeObjMsgAuthConfig,
+            Types::UnixConfig,
+            Types::UDPConfig,
+            Types::EncoderConfig,
+            Types::DecoderConfig,
+            Types::IDsConfig,
+            Types::EpochsConfig
+        >,
+        ctx: Ctx
+    ) -> Result<(Self, Notify), Error> {
+        let (
+            msg_auth_config,
+            dispatch_config,
+            thread_config,
+            proto_config,
+            proto_auth_config,
+            hash_config
+        ) = config.take();
+        let (starter, notify) = DispatchThreadStarter::<
+            CompoundFarChannelsLargeObjDispatchTypes<
+                Types::InMsg,
+                Types::OutMsg,
+                Types::LargeObjWrapper,
+                Types::LargeObjMsgAuth,
+                Types::AuthNChan,
+                Types::SessionAuth,
+                Types::Unix,
+                Types::UDP,
+                Types::Epochs,
+                Types::Resolver,
+                BusLargeObjTypes<Types, Ctx>,
+                Ctx
+            >,
+            _
+        >::create(thread_config, ctx)?;
+
+        Ok((
+            DispatchLargeObjBusStarter {
+                msg_auth_config: msg_auth_config,
+                dispatch_config: dispatch_config,
+                proto_config: proto_config,
+                proto_auth_config: proto_auth_config,
+                hash_config: hash_config,
+                starter: starter
+            },
+            notify
+        ))
+    }
+
+    pub fn start<SessionDisp>(
+        self,
+        session: SessionDisp,
+        shutdown: ShutdownFlag
+    ) -> Result<DispatchLargeObjBus<Types, Ctx>, WithMutexPoison<Error>>
+    where
+        SessionDisp: 'static + SessionDispatch<Types::DispTypes> + Send {
+        info!(target: "dispatch-datagram-bus",
+              "creating dispatch bus");
+
+        let DispatchLargeObjBusStarter {
+            proto_auth_config,
+            msg_auth_config,
+            dispatch_config,
+            proto_config,
+            hash_config,
+            starter
+        } = self;
+        let dispatcher: LargeObjDispatcher<Types, SessionDisp, _> =
+            LargeObjDispatcher {
+                session: session,
+                config: dispatch_config,
+                proto_auth_config: proto_auth_config,
+                msg_auth_config: msg_auth_config,
+                proto_config: proto_config,
+                hash_config: hash_config
+            };
+        let join_handle = starter.start(dispatcher, shutdown)?;
+
+        Ok(DispatchLargeObjBus {
+            types: PhantomData,
+            ctx: PhantomData,
+            join_handle: join_handle
+        })
+    }
+}
+
+impl<Types, Ctx> DispatchLargeObjBus<Types, Ctx>
+where
+    Types: 'static + DispatchLargeObjBusTypes<Ctx>,
+    Ctx: 'static + NSNameCachesCtx + Send
+{
+    pub fn cleanup(self) {
+        debug!(target: "dispatch-bus-cleanup",
+               "joining pull streams");
+
+        if self.join_handle.join().is_err() {
+            error!(target: "dispatch-bus-cleanup",
+                   "error joining pull streams listener")
         }
     }
 }
 
-impl<MsgCodec, Acquire> Display
-    for DispatchDatagramBusCreateError<MsgCodec, Acquire>
+impl<Session, Stream, Auth> ScopedError
+    for DatagramDispatchError<Session, Stream, Auth>
 where
-    MsgCodec: Display,
-    Acquire: Display
+    Session: ScopedError,
+    Stream: ScopedError,
+    Auth: ScopedError
+{
+    #[inline]
+    fn scope(&self) -> ErrorScope {
+        match self {
+            DatagramDispatchError::Session { err } => err.scope(),
+            DatagramDispatchError::Stream { err } => err.scope(),
+            DatagramDispatchError::Auth { err } => err.scope()
+        }
+    }
+}
+
+impl<Session, Stream, Hash, ProtoAuth, Auth, Proto> ScopedError
+    for LargeObjDispatchError<Session, Stream, Hash, ProtoAuth, Auth, Proto>
+where
+    Session: ScopedError,
+    Stream: ScopedError,
+    Hash: ScopedError,
+    ProtoAuth: ScopedError,
+    Auth: ScopedError,
+    Proto: ScopedError
+{
+    #[inline]
+    fn scope(&self) -> ErrorScope {
+        match self {
+            LargeObjDispatchError::Session { err } => err.scope(),
+            LargeObjDispatchError::Stream { err } => err.scope(),
+            LargeObjDispatchError::ProtoAuth { err } => err.scope(),
+            LargeObjDispatchError::Auth { err } => err.scope(),
+            LargeObjDispatchError::Hash { err } => err.scope(),
+            LargeObjDispatchError::Proto { err } => err.scope()
+        }
+    }
+}
+
+impl<Session, Stream, Auth> Display
+    for DatagramDispatchError<Session, Stream, Auth>
+where
+    Session: Display,
+    Stream: Display,
+    Auth: Display
 {
     fn fmt(
         &self,
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            DispatchDatagramBusCreateError::MsgCodec { err } => err.fmt(f),
-            DispatchDatagramBusCreateError::Acquire { err } => err.fmt(f)
+            DatagramDispatchError::Session { err } => err.fmt(f),
+            DatagramDispatchError::Auth { err } => err.fmt(f),
+            DatagramDispatchError::Stream { err } => write!(f, "{}", err)
+        }
+    }
+}
+
+impl<Session, Stream, Hash, ProtoAuth, Auth, Proto> Display
+    for LargeObjDispatchError<Session, Stream, Hash, ProtoAuth, Auth, Proto>
+where
+    Session: Display,
+    Stream: Display,
+    Hash: Display,
+    ProtoAuth: Display,
+    Auth: Display,
+    Proto: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), std::fmt::Error> {
+        match self {
+            LargeObjDispatchError::Session { err } => err.fmt(f),
+            LargeObjDispatchError::Hash { err } => err.fmt(f),
+            LargeObjDispatchError::Auth { err } => err.fmt(f),
+            LargeObjDispatchError::ProtoAuth { err } => err.fmt(f),
+            LargeObjDispatchError::Proto { err } => err.fmt(f),
+            LargeObjDispatchError::Stream { err } => write!(f, "{}", err)
         }
     }
 }
